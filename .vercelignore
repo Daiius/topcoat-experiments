@@ -1,0 +1,30 @@
+# Files `vercel deploy` does not upload (scripts/deploy-vercel.sh deploys both
+# projects from the repository root). Gitignore syntax: a pattern without a
+# leading slash matches at any depth.
+#
+# Vercel already skips .git, .vercel, .next, node_modules, .env.local,
+# .dockerignore, .gitignore, ... (docs: builds/build-features).
+# Hobby CLI uploads are capped at 100 MB, so build output must stay out.
+#
+# Needed by the builds:
+#   topcoat (Container Runtime): Dockerfile, data/, topcoat/
+#   nextjs (Root Directory nextjs/): nextjs/, ../data (copied by
+#   nextjs/scripts/copy-data.mjs)
+
+# Build output and generated files (rebuilt on Vercel)
+target/
+/topcoat/assets/
+/nextjs/public/images/
+/nextjs/src/generated/
+
+# Secrets and local state
+.env*
+/deploy/
+
+# Not used by either build
+/.claude/
+/.playwright-mcp/
+/bench/
+/docs/
+/scripts/
+/AGENTS.md

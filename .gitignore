@@ -9,3 +9,5 @@ node_modules/
 .env*
 # Playwright MCP
 .playwright-mcp/
+# Vercel deploy state (scripts/deploy-vercel.sh): project IDs and URLs
+/deploy/
