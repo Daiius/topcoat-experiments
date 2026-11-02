@@ -563,3 +563,66 @@
   - `next/image` は `'use client'` の部品（`next/dist/client/image-component.js`）なので、画像を使うページには、その分の Client JS が載る。
     `onLoad` などを渡していないので、描画は Server Component から HTML として出る。JS は主にハイドレーションのためのもの。
 - **所要時間の体感**: 実装 15 分、`sizes` の手計算と `preload` の docs 読みで 15 分。
+
+## 2026-11-03 [Docker] topcoat は「バイナリ + `assets/`」の 2 点を配置する
+
+- 書こうとしたもの: Vercel Container Runtime 用のルート `Dockerfile`（builder `rust:1.99-bookworm` → runtime `gcr.io/distroless/cc-debian12:nonroot`）。
+- **成果物が 1 ファイルで終わらない。** `asset!` の実体は `topcoat asset bundle` が作る `assets/` で、
+  実行時は `current_exe()` の隣を探す。そのため、`/app/storefront-topcoat` と `/app/assets/` を同じディレクトリに置く必要がある。
+  「Rust ならバイナリ 1 本」と思って `COPY` を 1 行で済ませると、最初の描画で `failed to resolve asset … in the asset catalog` の panic になるはずだ（journal #4 #6 の節）。
+- `topcoat asset bundle` は**内部で `cargo build` をもう一度呼び**、できたバイナリから asset の宣言を読む（`topcoat-cli/src/asset/bundle.rs`）。
+  `--release` / `--profile` / `--bin` / `--package` しか受け付けず、`--locked` は渡せない。先に `cargo build --release --locked` を済ませておけば、2 回目は no-op になる。
+- **BuildKit の cache mount に置いた `target/` は、その `RUN` が終わると見えなくなる。** そのため、bundle の出力先を `--out /out/assets` にし、
+  バイナリも同じ `RUN` の中で `/out` にコピーした。既定の `target/release/assets` に出すと、キャッシュに古いハッシュのファイルが溜まっていく点も避けられる。
+- cache mount の `target/` には mtime の罠がある。cargo は mtime で鮮度を判断する。そのため、古いコミットを checkout してビルドすると、ソースがキャッシュ済みの成果物より古くなり、
+  再コンパイルされない恐れがある。対策として、ビルドの前に `src/` と `build.rs` を `touch` し、このクレートだけは毎回ビルドし直すようにした（依存はキャッシュのまま）。
+- **ビルド中にネットワークが要る**。取得するのは crates.io（アプリと topcoat-cli の依存）と、`build.rs` 経由で GitHub releases から落とす Tailwind CLI の単体バイナリ。
+  Tailwind CLI と bundler のダウンロードキャッシュは `target/` 配下（`topcoat_core::cache`）にあるので、cache mount に乗る。
+- PORT の扱い（Vercel 公式の Rust ガイドに合わせた）:
+  - Vercel のドキュメントでは、コンテナへの転送先は**既定で 80 番**。プロジェクト設定の環境変数 `PORT` で上書きできる
+    （https://vercel.com/docs/functions/runtimes/container の "Port resolution"）。
+  - 公式 Rust ガイドは `gcr.io/distroless/cc-debian12:nonroot` に `ENV PORT=80` を書き、`PORT` を読んで、無ければ 80 を使うよう説明している
+    （https://vercel.com/kb/guide/deploy-rust-on-vercel-with-docker）。
+  - nonroot でも 80 番を bind できる。Docker 20.10 以降は、コンテナの network namespace に `net.ipv4.ip_unprivileged_port_start=0` を設定するからだ。
+    ホストのこの値は 1024 のままだが、コンテナの中では関係ない。
+  - 結論として、Dockerfile は `ENV HOST=0.0.0.0 PORT=80`。ローカル計測（`bench/compose.yml`）では、Next.js と条件を揃えるため `PORT=8080` で上書きする。
+- `COOKIE_KEY` はイメージに焼かず、実行時の環境変数で渡す。`bench/compose.yml` では `${COOKIE_KEY:?…}` にした。
+  そのため、**Next.js だけを起動するときにも `COOKIE_KEY` の export が要る**（compose は補間をファイル全体に対して行う）。
+- **所要時間の体感**: Dockerfile 自体は 20 分。topcoat-cli のソースで bundle の挙動（出力先・再ビルド）を確かめるのに 15 分。
+
+## 2026-11-03 [Docker] Next.js の standalone は「3 か所を手で組み立てる」
+
+- 書こうとしたもの: `nextjs/Dockerfile`（builder `node:24-bookworm-slim` + corepack の pnpm 11 → runtime `gcr.io/distroless/nodejs24-debian12:nonroot`）。
+  ビルドコンテキストはリポジトリ直下（`copy-data` が `../data` を読むため）。
+- `output: 'standalone'` の出力は、**そのままでは動く形になっていない**。`.next/standalone/` にはサーバーと、トレースされた `node_modules` だけが入る。
+  `.next/static`（クライアント JS / CSS）と `public/`（ここでは `copy-data` が作る `public/images`）は、CDN に置く前提で**含まれない**ので、
+  `standalone/.next/static` と `standalone/public` に手でコピーする。忘れると、HTML は返るのに JS・CSS・画像が 404 になる。
+- `outputFileTracingRoot` を既定（`nextjs/`）のままにしているので、`server.js` は `standalone/` の直下に出る。
+  `turbopack.root` を広げていたら（D25 でやめた）、`standalone/nextjs/server.js` のように一段深くなっていたはずだ。
+- **`next/image` は実行時に `.next/cache/images` へ書き込む。** distroless の nonroot（uid 65532）で動かすので、`COPY --chown=65532:65532` にした。
+  root 所有のままだと、最適化のたびにキャッシュの書き込みに失敗するはずだ（未確認。supervisor の実行で確認する）。
+- sharp: Next.js 16.4.4 は `sharp@0.35.5` を optionalDependencies に持つ。pnpm は `@img/sharp-linux-x64` と `@img/sharp-libvips-linux-x64`
+  （prebuilt、`libc: glibc`）を入れる。ビルド用イメージ（bookworm）と実行用イメージ（distroless debian12）はどちらも glibc 2.36 で揃う。
+  `node` 本体のために distroless/nodejs には libstdc++ も入っている。standalone のトレースに sharp が含まれるかは、
+  supervisor の実行で `/_next/image?...` が 200 + `image/webp` を返すことで確かめる（`bench/run.sh assets` の non-200 列でも分かる）。
+- distroless/nodejs の `ENTRYPOINT` は `/nodejs/bin/node` なので、`CMD ["server.js"]` だけを書く。`HOSTNAME=0.0.0.0` と `PORT=8080` は `server.js` が読む。
+- corepack は Node 24 には同梱されている（Node 25 で同梱をやめた）。`packageManager: pnpm@11.24.0` を読んで pnpm を取得する。
+  pnpm の store は cache mount に置いた。node_modules とは別のファイルシステムになるので、ハードリンクではなくコピーになる。
+- **所要時間の体感**: 15 分。
+
+## 2026-11-03 [Docker] distroless ではヘルスチェックを書けない／各ビルドが落とすもの
+
+- distroless にはシェルも curl も無いので、Dockerfile の `HEALTHCHECK` と compose の `healthcheck:` は書けない（`CMD-SHELL` も `curl` も無い）。
+  アプリ側に「自分自身を叩くサブコマンド」を足せば書けるが、今回はアプリのコードを変えない方針にした。
+  代わりに、`bench/run.sh` の `wait_ready` が**ホストから `/` を 10ms 間隔でポーリング**し、200 が返るまで待つ。コンテナが落ちたら、ログを出して即座に失敗する。
+  `depends_on: condition: service_healthy` も使えないので、起動順の制御はスクリプト側で行う。
+- 各ビルドが初回に取得するもの（いずれもキャッシュが効けば 2 回目以降は不要）:
+
+  | ビルド | 取得するもの |
+  |---|---|
+  | topcoat | `rust:1.99-bookworm`（圧縮で約 0.5GB）、`distroless/cc-debian12`（約 10MB）、crates.io（アプリ + topcoat-cli の依存）、Tailwind CLI の単体バイナリ（GitHub releases） |
+  | Next.js | `node:24-bookworm-slim`（約 80MB）、`distroless/nodejs24-debian12`（約 50MB）、corepack 経由の pnpm 本体、npm レジストリの依存（`next` の SWC バイナリと sharp / libvips の prebuilt を含む） |
+
+  Next.js は Turbopack も SWC もネイティブバイナリ同梱の npm パッケージなので、ツールチェーンのダウンロードは依存の取得と一体になる。
+  topcoat は Rust ツールチェーン（ベースイメージ）・CLI（`cargo install` でソースからビルド）・Tailwind CLI と、取得経路が 3 つに分かれる。
+- `docker buildx build --check` は両 Dockerfile とも警告なしだった。実ビルドは supervisor が行う。サイズと所要時間はその結果で埋める。

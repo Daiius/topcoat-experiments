@@ -1,0 +1,3 @@
+# Raw measurement output. Commit a run explicitly (git add -f) when the
+# article cites it.
+/results/
