@@ -1,0 +1,3 @@
+# Written by build.rs (Tailwind) and bundled by `topcoat asset bundle`
+/assets/
+/target/
