@@ -31,3 +31,5 @@
 | D24 | 11-03 | 自律 | Next.js の未知 id は 200 + noindex（Cache Components の流儀）のまま。topcoat は 404 | 静的シェルを先に返すとステータスを後から変えられない、というトレードオフ自体を記事材料に |
 | D25 | 11-03 | 自律 | Next.js は `products.json` もビルド前コピー。`turbopack.root` 拡大はやめる | docs が拡大を警告。dev が topcoat/target を watch する恐れ |
 | D26 | 11-03 | 自律 | Next.js ヘッダーのカート件数は `cookies()` + Suspense のまま（全ページに動的な穴が開く） | HttpOnly を保てる。Client 読みの代案は記事で触れる |
+| D27 | 11-03 | 自律 | Next.js 版を supervisor 検証のうえ main へ仮 merge | スクショは `scratchpad/shots/next/` |
+| D28 | 11-03 | 自律 | 負荷計測ツールは oha（`cargo install oha`）。公式ベンチと同じツール | k6/oha 未導入。公式 bench.sh と揃える |

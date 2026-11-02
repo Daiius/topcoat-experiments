@@ -61,3 +61,28 @@ Zenn 記事を別セッションで書くための素材。**実測値・確認�
 - CDN に載るのは `s-maxage` 系付きの関数応答のみ（Set-Cookie 付きは不可）。Next.js の静的出力はビルド時点で CDN
 - Hobby: 2GB/1vCPU 固定、最大実行 300s。Active CPU 課金（I/O 待ちは非課金、メモリは接続中も課金）
 - ローカル検証は `vercel dev -L`（docker 必要）
+
+## 6. Next.js 版の実測（`next build` + `next start`、ローカル、2026-11-03）
+
+- Next.js 16.4.4 / React 19.3.1 / Turbopack。`next build`: コンパイル 1.5s + TS 1.3s + 静的生成 506 ページ 8.5s（8 workers）
+  - 関連商品の 800ms 遅延 × 500 ページは**ビルド時に吸収**される（`'use cache'`）
+  - 全ルートが ◐ Partial Prerender（静的シェル + 動的部分ストリーム）。`/api/stock/[id]` のみ ƒ
+- 応答（非圧縮 / br）:
+
+| URL | TTFB | 完了 | 非圧縮 | br |
+|---|---|---|---|---|
+| `/` | 3.9ms | 16ms | 165KB | 12.6KB |
+| `/products` | 5.2ms | 29ms | 337KB | 18.9KB |
+| `/products?q=headphones` | 2.7ms | 15ms | 214KB | — |
+| `/products/1` | 7.3ms | **220ms**（レビュー 200ms のみ待つ） | 154KB | 16.7KB |
+| `/products/9999` | — | — | 27KB, **200**（noindex） | — |
+
+- HTML が topcoat の 3〜4 倍（RSC ペイロードを HTML 内に同梱するため）。圧縮後は 12〜19KB
+- `/products/1` の JS: 8 チャンク、**595KB raw / 183KB gzip**（topcoat は runtime 1 本 48.6KB / 15.4KB）
+- 詳細ページの `Cache-Control: private, no-cache, no-store`（`x-nextjs-postponed: 1`）→ 自前サーバーでは HTML 全体を CDN キャッシュしない。
+  Vercel 上では静的シェル部分を CDN から返す仕組み（PPR）が働く想定 → デプロイ時に確認
+- 画像: `/_next/image?url=…&w=384|640&q=75` で縮小配信（topcoat は 1600px 原寸 297KB）
+- 100ms 時点のスクショ: **Next は関連商品が表示済み・レビューのみスケルトン**／topcoat は両方スケルトン
+- 一覧のストリーム途中、Suspense フォールバックとストリーム後の両方に検索 input が一瞬 2 つ存在（フォールバックに input を描いているため）。
+  差し替え前に入力した文字は失われうる → 「静的シェルに何を入れるか」の設計判断の例
+- 検索は Enter 確定（`next/form` GET）。topcoat の shard は入力ごとの部分再描画。**同じ「検索」でも流儀に沿うと UX が変わる**
