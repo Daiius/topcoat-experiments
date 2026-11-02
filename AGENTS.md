@@ -44,7 +44,7 @@
 | 2 | 詳細のレビュー・関連商品（擬似遅延: 例 200ms / 800ms の非同期取得） | `suspense` | `<Suspense>` ストリーミング |
 | 3 | 一覧の検索 | `#[shard]` 部分再描画 | Client Component または searchParams |
 | 4 | カート（追加・数量変更・表示） | handler/`#[procedure]` + cookie | Server Action + cookie |
-| 5 | 在庫の live 更新 | `live!` / SSE | Route Handler SSE または polling |
+| 5 | 在庫の live 更新 | `live!` + `connected()`（transport は **WebSocket**） | Route Handler SSE（Next は WebSocket を Route Handler で扱えない） |
 | 6 | 商品画像 | `asset!`（最適化なし） | `next/image` |
 
 ## Next.js 版の実装方針（2026-11 時点の推奨構成）
@@ -59,6 +59,7 @@
 - #3 検索: `next/form` の `<Form action="">`（GET）+ Server Component の `searchParams`
 - #4 カート: Server Action + `cookies().set`、ヘッダー件数は `cookies()` を読む小コンポーネントを `<Suspense>` で包む（それ以外は静的シェル）。
   フォームは `<form action={serverAction}>` で JS なしでも動く形
+- #4 補足: Add to cart 後は両版とも `/cart` へ redirect
 - #5 在庫 live: Route Handler で SSE（`ReadableStream`）+ Client Component の `EventSource`、`maxDuration` 指定。
   （Vercel では polling の方が素直、という考察は journal に書く）
 - #6 画像: `data/images/` をビルド前スクリプトで `public/images/` にコピー（**symlink は使わない**。コピー先は gitignore）、
@@ -66,7 +67,7 @@
 
 ## 未決事項（既決として実装しないこと）
 
-- Vercel コンテナ上で SSE の長時間接続が使えるか（関数最大実行時間 Hobby 300 秒）。駄目なら polling 等に退避し、それ自体を知見として記録する
+- Vercel コンテナ上で WebSocket の Upgrade と長時間保持が使えるか（topcoat `live!`。関数最大実行時間 Hobby 300 秒）。Next.js 側は SSE が同制約で使えるか。駄目なら polling 等に退避し、それ自体を知見として記録する
 - 計測シナリオの詳細（oha / Lighthouse / playwright の配分）
 
 ## 既知の topcoat の地雷（v0.11.0 時点の open issue）

@@ -22,3 +22,7 @@
 | D15 | 11-03 | 自律 | Next.js の在庫 live は SSE（Route Handler + EventSource）。polling は考察で触れる | topcoat `live!` と同じ土俵で比べるため。Vercel では polling が素直という調査結果あり |
 | D16 | 11-03 | 自律 | 並列度は 1 を維持（topcoat 第 2 弾の完了後に Next.js 版） | /supervise の規定（明示指示があるときだけ増やす） |
 | D17 | 11-03 | 自律 | Next.js の画像は `data/images` をビルド前コピーで `public/images` へ（symlink 不使用） | symlink は .gitignore の効き方が罠になる |
+| D18 | 11-03 | 自律 | topcoat の live transport は WebSocket（実装で判明）。Next.js は SSE のまま。AGENTS.md の論点を「Vercel コンテナで WS が使えるか」に修正 | Route Handler は WS 非対応。transport の違い自体を比較材料に |
+| D19 | 11-03 | 自律 | `COOKIE_KEY` 未設定は release では起動失敗にする（Docker 化時に対応） | 複数インスタンスで鍵不一致だとカートが消える |
+| D20 | 11-03 | 自律 | runtime JS（48KB, gzip 15KB）の全ページ読み込みは現状維持し知見として記録 | ページ単位の出し分け手段が docs に無い |
+| D21 | 11-03 | 自律 | Add to cart 後は両版とも `/cart` へ redirect | 挙動を揃えて比較するため |
