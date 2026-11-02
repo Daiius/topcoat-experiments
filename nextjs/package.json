@@ -1,0 +1,31 @@
+{
+  "name": "storefront-nextjs",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.24.0",
+  "scripts": {
+    "copy-images": "node scripts/copy-images.mjs",
+    "predev": "node scripts/copy-images.mjs",
+    "dev": "next dev",
+    "prebuild": "node scripts/copy-images.mjs",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "next typegen && tsc --noEmit",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "next": "16.4.4",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "4.3.3",
+    "@types/node": "24.19.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "eslint": "9.39.5",
+    "eslint-config-next": "16.4.4",
+    "tailwindcss": "4.3.3",
+    "typescript": "5.9.3"
+  }
+}

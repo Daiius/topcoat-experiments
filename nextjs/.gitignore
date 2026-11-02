@@ -1,0 +1,10 @@
+/node_modules
+/.next/
+/out/
+*.tsbuildinfo
+next-env.d.ts
+.env*
+.vercel
+
+# Copied from ../data/images by scripts/copy-images.mjs before dev/build.
+/public/images/

@@ -1,0 +1,102 @@
+import Link from "next/link";
+import { Suspense } from "react";
+
+import { Pagination } from "@/components/pagination";
+import { ProductCard } from "@/components/product-card";
+import { ProductGridSkeleton } from "@/components/skeletons";
+import { getCategories, getProductsPage } from "@/lib/catalog";
+import { firstParam, normalizeSort, productsUrl } from "@/lib/urls";
+
+const SORT_OPTIONS: [string | null, string][] = [
+  [null, "Default"],
+  ["name", "Name"],
+  ["price", "Price: Low to high"],
+  ["price-desc", "Price: High to low"],
+  ["rating", "Rating"],
+];
+
+const CHIP_ACTIVE = "rounded-full bg-slate-900 px-3 py-1 font-medium text-white";
+const CHIP_INACTIVE =
+  "rounded-full bg-white px-3 py-1 font-medium text-slate-600 shadow-sm hover:bg-slate-100";
+
+const GRID = "mt-4 grid grid-cols-2 gap-6 md:grid-cols-3 lg:grid-cols-4";
+
+// Not async: the page never awaits `searchParams` itself. The heading and the
+// fallback form the static shell; the URL-dependent part streams in.
+export default function ProductsPage({ searchParams }: PageProps<"/products">) {
+  return (
+    <>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <h1 className="text-3xl font-bold tracking-tight">All products</h1>
+      </div>
+      <Suspense fallback={<ProductGridSkeleton count={8} className={`mt-24 ${GRID}`} />}>
+        <ProductResults searchParams={searchParams} />
+      </Suspense>
+    </>
+  );
+}
+
+async function ProductResults({ searchParams }: Pick<PageProps<"/products">, "searchParams">) {
+  const params = await searchParams;
+  const sort = normalizeSort(firstParam(params.sort));
+  const category = firstParam(params.category) ?? null;
+  const requested = Number.parseInt(firstParam(params.page) ?? "", 10);
+  // Cached per argument tuple: the filtering runs once per distinct URL.
+  const page = await getProductsPage(Number.isNaN(requested) ? 1 : requested, sort, category, null);
+
+  return (
+    <>
+      <div className="mt-6 flex flex-wrap items-center gap-2 text-sm">
+        <span className="font-medium text-slate-500">Sort:</span>
+        {SORT_OPTIONS.map(([value, label]) => (
+          <Link
+            key={label}
+            href={productsUrl(1, value, category, null)}
+            className={value === sort ? CHIP_ACTIVE : CHIP_INACTIVE}
+          >
+            {label}
+          </Link>
+        ))}
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+        <span className="font-medium text-slate-500">Category:</span>
+        <Link
+          href={productsUrl(1, sort, null, null)}
+          className={category === null ? CHIP_ACTIVE : CHIP_INACTIVE}
+        >
+          All
+        </Link>
+        {getCategories().map((entry) => (
+          <Link
+            key={entry.slug}
+            href={productsUrl(1, sort, entry.slug, null)}
+            className={category === entry.slug ? CHIP_ACTIVE : CHIP_INACTIVE}
+          >
+            {entry.name}
+          </Link>
+        ))}
+      </div>
+      <p className="mt-6 text-sm text-slate-500" aria-live="polite">
+        {`${page.total} products`}
+      </p>
+      {page.total === 0 ? (
+        <p className="mt-8 text-slate-500">No products found.</p>
+      ) : (
+        <>
+          <div className={GRID}>
+            {page.items.map((product) => (
+              <ProductCard key={product.id} product={product} />
+            ))}
+          </div>
+          <Pagination
+            current={page.current}
+            pageCount={page.pageCount}
+            sort={sort}
+            category={category}
+            search={null}
+          />
+        </>
+      )}
+    </>
+  );
+}

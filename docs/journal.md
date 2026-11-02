@@ -331,3 +331,47 @@
   （Rust 2024 では `std::env::set_var` が `unsafe` で、このクレートは `unsafe_code = "deny"` にしている）。
 - 経緯: マルチインスタンスで鍵がずれると、別のインスタンスが署名した cookie は「改ざん」扱いになり、**カートが黙って空になる**。
   エラーにならないので気づきにくい。そのため、起動時に落とす方が安全と判断した。
+
+## 2026-11-03 [Next.js] #1 公式ベンチを Next.js 16.4 + Cache Components の推奨構成に書き直す
+
+- **書こうとしたこと**: 公式 `benchmarks/nextjs`（v0.11.0 タグ、Next 15 + `force-dynamic`）の見た目とカタログのロジックを借り、
+  `cacheComponents: true` / `partialPrefetching: true` の構成で一覧・詳細・ホームを書き直す。
+- **土台の載せ替え**
+  - `npm view next version` は 16.4.4（公開は 2026-11-02、前日）。exact で固定した。React は 19.3.1。
+  - **pnpm 11 の `minimumReleaseAge` に引っかかった。** 公開から日が浅い `next@16.4.4` と `@next/swc-*` などが対象になり、
+    pnpm が `pnpm-workspace.yaml` に `minimumReleaseAgeExclude` を 12 件**自動で追記**した。exact 固定と同じ意図なので、そのままコミットした。
+  - TypeScript の `latest` は 7.0.2（ネイティブ版）だった。create-next-app 16.4.4 のテンプレートが `typescript: ^5` / `eslint: ^9` なので、
+    5.9.3 / 9.39.5 に固定した。
+  - **`../data/products.json` の import が、そのままでは解決できない。** Turbopack はロックファイルのある場所を root とみなし、
+    root の外のファイルを解決しない（同梱 docs `turbopack.md` の "Root directory"）。公式ベンチは同じ相対 import で動いていたが、
+    あちらは Next 15 で、build が webpack だった。`turbopack.root` と `outputFileTracingRoot` をリポジトリ直下に広げて回避した。
+    docs は「root を広げすぎると watch が重くなる」と警告している。リポジトリ直下には `topcoat/target/` があるので、`next dev` の watch 負荷は要観察。
+    standalone 出力は `.next/standalone/nextjs/server.js` に入れ子になる見込み（tracing root からの相対パスになるため）。
+  - 公式の `<a>` は `next/link` の `<Link>` にした。クライアント遷移と prefetch を使うのが Next の流儀なので。
+- **書き味（流儀どおりに書いた箇所）**
+  - **ホーム**: `getFeatured()` を `'use cache'` + `cacheLife('max')` にして await するだけ。runtime データを読まないので、ページ全体が静的になる。
+  - **一覧**: ページ本体を `async` にせず、`searchParams` の Promise を子に渡して `<Suspense>` の中で await する
+    （docs `caching.md` の "Maximizing the static shell"）。絞り込みは `getProductsPage(page, sort, category, search)` で、
+    `'use cache'` の引数がそのままキャッシュキーになる。同じ URL の 2 回目以降は、インスタンスのメモリから返る。
+  - **詳細**: `generateStaticParams` で 500 件を列挙する。ページ本体は `async` にせず、`params` も `<Suspense>` の中で await する。
+    ISR の guide は「`generateStaticParams` で列挙済みの param でも、境界の内側で読め。外で await すると App Shell がその URL に縛られる」と書いている。
+    そのため、列挙済みの id では中身が全部ビルド時に埋まり、それ以外の id では骨組み（App Shell）が先に出る、という 2 段構えになる。
+  - **`'use cache'` をどこに付けるか**: docs の "Predictable values" によれば、module scope の import は**キャッシュ指定なしでも prerender 対象**になる。
+    つまり JSON の import 自体には何も要らない。AGENTS.md の「カタログ読み込みは `'use cache'` + `cacheLife('max')`」は、
+    読み出し関数（`getProduct` / `getFeatured` / `getProductsPage`）に付ける形で実装した。`'use cache'` は戻り値をシリアライズするので、
+    `Map` を抱えたカタログ全体を返すより、関数ごとに結果を返す方が自然だった。`getProduct` は `undefined` ではなく `null` を返すようにした。
+  - 型は `PageProps<'/products/[id]'>` を使った。これは `next typegen` が生成するグローバル型なので、`typecheck` スクリプトは `next typegen && tsc --noEmit` にした。
+- **詰まった点 / topcoat との差**
+  - **`dynamicParams` は Cache Components では使えない**（docs の `dynamicParams.md`）。未知の id（`/products/9999`）では App Shell を先に流してから、
+    `<Suspense>` の中で `notFound()` に到達する。docs（`not-found.md`）によれば「ストリーム開始後はステータス 200 のまま、`noindex` を差し込む」。
+    つまり **404 ではなく 200 + not-found UI** になる見込み。topcoat は 404 を返す。404 にしたければ、`params` を境界の外で await する
+    （App Shell を諦める）か、proxy で弾くことになる。推奨構成どおりに書くと、ステータスコードの正しさと静的シェルが引き換えになる。
+  - 公式ベンチの `page` が数値でない場合（`?page=abc`）は 1 ページ目扱いのまま。topcoat は `query_params` の型エラーで 400 を返す。
+- **気づき（配信されるもの・予想）**
+  - `/`: 静的（`○`）。HTML は全部ビルド時に生成される。
+  - `/products`: 部分 prerender（`◐`）。静的シェルは見出しとスケルトンで、URL に依存する部分（チップ、件数、グリッド）はリクエスト時にストリームされる。
+    `searchParams` を読む限り、この部分は CDN キャッシュに載らない。`getProductsPage` の結果はインスタンス内のメモリにキャッシュされる。
+  - `/products/[id]`: 500 件が SSG（`●`）。列挙済みの id では、HTML 全体がビルド時に完成している。
+  - Client JS: Client Component はまだ自前で書いていない。それでも React と Next のルーター、`<Link>` の分が全ページに載る。
+    topcoat の runtime（gzip 約 15KB）との比較は supervisor の計測待ち。
+- **所要時間の体感**: 雛形と依存の固定で 15 分、docs（`node_modules/next/dist/docs` に同梱）の読み込みで 20 分、実装 20 分。
