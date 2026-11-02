@@ -331,3 +331,235 @@
   （Rust 2024 では `std::env::set_var` が `unsafe` で、このクレートは `unsafe_code = "deny"` にしている）。
 - 経緯: マルチインスタンスで鍵がずれると、別のインスタンスが署名した cookie は「改ざん」扱いになり、**カートが黙って空になる**。
   エラーにならないので気づきにくい。そのため、起動時に落とす方が安全と判断した。
+
+## 2026-11-03 [Next.js] #1 公式ベンチを Next.js 16.4 + Cache Components の推奨構成に書き直す
+
+- **書こうとしたこと**: 公式 `benchmarks/nextjs`（v0.11.0 タグ、Next 15 + `force-dynamic`）の見た目とカタログのロジックを借り、
+  `cacheComponents: true` / `partialPrefetching: true` の構成で一覧・詳細・ホームを書き直す。
+- **土台の載せ替え**
+  - `npm view next version` は 16.4.4（公開は 2026-11-02、前日）。exact で固定した。React は 19.3.1。
+  - **pnpm 11 の `minimumReleaseAge` に引っかかった。** 公開から日が浅い `next@16.4.4` と `@next/swc-*` などが対象になり、
+    pnpm が `pnpm-workspace.yaml` に `minimumReleaseAgeExclude` を 12 件**自動で追記**した。exact 固定と同じ意図なので、そのままコミットした。
+  - TypeScript の `latest` は 7.0.2（ネイティブ版）だった。create-next-app 16.4.4 のテンプレートが `typescript: ^5` / `eslint: ^9` なので、
+    5.9.3 / 9.39.5 に固定した。
+  - **`../data/products.json` の import が、そのままでは解決できない。** Turbopack はロックファイルのある場所を root とみなし、
+    root の外のファイルを解決しない（同梱 docs `turbopack.md` の "Root directory"）。公式ベンチは同じ相対 import で動いていたが、
+    あちらは Next 15 で、build が webpack だった。最初は `turbopack.root` と `outputFileTracingRoot` をリポジトリ直下に広げて回避した。
+    しかし docs は「root を広げすぎると watch が重くなる」と警告している。リポジトリ直下には `topcoat/target/` があり、`next dev` がそこまで watch しかねない。
+    さらに standalone 出力が `.next/standalone/nextjs/server.js` に入れ子になる（tracing root からの相対パスになるため）。
+  - **最終的な解決策: root は既定（`nextjs/`）のまま、データをパッケージ内へコピーする。** 画像と同じ `scripts/copy-data.mjs` で、
+    `../data/products.json` を `src/generated/products.json`（gitignore）へコピーし、`@/generated/products.json` を import する。
+    コピーは `predev` / `prebuild` に加え、`pretypecheck` / `prelint` でも走らせる（tsc が JSON の import を解決するため）。
+    `../data` が唯一の正であることは変わらない。`next.config.ts` から root の設定が消えたので、standalone 出力は通常の `.next/standalone/server.js` に戻る見込み。
+    「別ディレクトリの共有データを読む」という素朴な構成が、Turbopack の root の規則によってビルド前コピーという一手間に変わった。
+  - 公式の `<a>` は `next/link` の `<Link>` にした。クライアント遷移と prefetch を使うのが Next の流儀なので。
+- **書き味（流儀どおりに書いた箇所）**
+  - **ホーム**: `getFeatured()` を `'use cache'` + `cacheLife('max')` にして await するだけ。runtime データを読まないので、ページ全体が静的になる。
+  - **一覧**: ページ本体を `async` にせず、`searchParams` の Promise を子に渡して `<Suspense>` の中で await する
+    （docs `caching.md` の "Maximizing the static shell"）。絞り込みは `getProductsPage(page, sort, category, search)` で、
+    `'use cache'` の引数がそのままキャッシュキーになる。同じ URL の 2 回目以降は、インスタンスのメモリから返る。
+  - **詳細**: `generateStaticParams` で 500 件を列挙する。ページ本体は `async` にせず、`params` も `<Suspense>` の中で await する。
+    ISR の guide は「`generateStaticParams` で列挙済みの param でも、境界の内側で読め。外で await すると App Shell がその URL に縛られる」と書いている。
+    そのため、列挙済みの id では中身が全部ビルド時に埋まり、それ以外の id では骨組み（App Shell）が先に出る、という 2 段構えになる。
+  - **`'use cache'` をどこに付けるか**: docs の "Predictable values" によれば、module scope の import は**キャッシュ指定なしでも prerender 対象**になる。
+    つまり JSON の import 自体には何も要らない。AGENTS.md の「カタログ読み込みは `'use cache'` + `cacheLife('max')`」は、
+    読み出し関数（`getProduct` / `getFeatured` / `getProductsPage`）に付ける形で実装した。`'use cache'` は戻り値をシリアライズするので、
+    `Map` を抱えたカタログ全体を返すより、関数ごとに結果を返す方が自然だった。`getProduct` は `undefined` ではなく `null` を返すようにした。
+  - 型は `PageProps<'/products/[id]'>` を使った。これは `next typegen` が生成するグローバル型なので、`typecheck` スクリプトは `next typegen && tsc --noEmit` にした。
+- **詰まった点 / topcoat との差**
+  - **`dynamicParams` は Cache Components では使えない**（docs の `dynamicParams.md`）。未知の id（`/products/9999`）では App Shell を先に流してから、
+    `<Suspense>` の中で `notFound()` に到達する。docs（`not-found.md`）によれば「ストリーム開始後はステータス 200 のまま、`noindex` を差し込む」。
+    つまり **404 ではなく 200 + not-found UI** になる見込み。topcoat は 404 を返す。404 にしたければ、`params` を境界の外で await する
+    （App Shell を諦める）か、proxy で弾くことになる。推奨構成どおりに書くと、ステータスコードの正しさと静的シェルが引き換えになる。
+    **静的シェルを先に返す以上、ステータスは後から変えられない。** これは PPR の構造上のトレードオフだ。判断として、Next の流儀（200 + noindex）のまま残した。
+  - 公式ベンチの `page` が数値でない場合（`?page=abc`）は 1 ページ目扱いのまま。topcoat は `query_params` の型エラーで 400 を返す。
+- **気づき（配信されるもの・予想）**
+  - `/`: 静的（`○`）。HTML は全部ビルド時に生成される。
+  - `/products`: 部分 prerender（`◐`）。静的シェルは見出しとスケルトンで、URL に依存する部分（チップ、件数、グリッド）はリクエスト時にストリームされる。
+    `searchParams` を読む限り、この部分は CDN キャッシュに載らない。`getProductsPage` の結果はインスタンス内のメモリにキャッシュされる。
+  - `/products/[id]`: 500 件が SSG（`●`）。列挙済みの id では、HTML 全体がビルド時に完成している。
+  - Client JS: Client Component はまだ自前で書いていない。それでも React と Next のルーター、`<Link>` の分が全ページに載る。
+    topcoat の runtime（gzip 約 15KB）との比較は supervisor の計測待ち。
+- **所要時間の体感**: 雛形と依存の固定で 15 分、docs（`node_modules/next/dist/docs` に同梱）の読み込みで 20 分、実装 20 分。
+
+## 2026-11-03 [Next.js] #2 レビューはストリーム、関連商品は `'use cache'` で静的シェルに焼く
+
+- **書こうとしたこと**: topcoat の #2 と同じ擬似 upstream（`src/lib/remote.ts`、遅延は `remote.rs` と同じ 200ms / 800ms）を使う。
+  レビューは鮮度が要るデータとしてリクエストごとに取得し、関連商品は共有してよいデータとしてキャッシュする。
+- **書き味**
+  - 差分は小さい。レビューは「async Server Component を `<Suspense fallback={<ReviewListSkeleton …/>}>` で包む」だけで、
+    topcoat の `suspense(fallback: …, reviews(…))` と同型。
+  - 関連商品は、取得関数 `fetchRelated` の先頭に `'use cache'` と `cacheLife('max')` を書くだけ。
+    **`<Suspense>` で包む必要すら無い。** ビルド時の prerender が 800ms を待って結果を HTML に焼くので、訪問者は待たない。
+    「遅いが共有できるデータは、キャッシュして遅延を消す」が、関数 1 つへの 2 行で書ける。この点は Next の流儀がはっきり効いている。
+  - 見出し「Reviews (n)」とスケルトンの枚数（`min(review_count, 3)`）は、topcoat と同じく即座に分かる値から決めた。
+- **詰まった点: タイマーは「リクエスト時のデータ」と見なされるのか**
+  - docs の例は、どれも「キャッシュしない `fetch`」で、それだけでリクエスト時扱いになる。一方、擬似遅延の `setTimeout` を
+    prerender がどう扱うか（待つのか、穴にするのか、エラーにするのか）は docs から読み取れなかった。
+  - そこで `fetchReviews` の先頭で `await connection()` を呼び、「これはビルド時には実行しない」と明示した
+    （docs の "Random values and timestamps" で、リクエストごとの値に使う手段）。本物の upstream なら `fetch` なので、この 1 行は要らない。
+  - `fetchRelated` 側は `'use cache'` の中で `setTimeout` を待つ。キャッシュの充填は prerender 中に待たれる（docs `use-cache.md` によれば、解決しない Promise を待ち続けた場合は 50 秒でビルドがタイムアウトする）。
+- **気づき（配信されるもの・予想）**
+  - 列挙済みの `/products/1` の HTML には、ビルド時の時点で**関連商品カードまで入っている**。レビュー部分はスケルトンで、
+    その後、同じ応答の中で RSC の差し込み（`<template>` + インライン `<script>`）がストリームされる。
+    レビューは `connection()` を呼んでいるため、リクエストごとに 200ms かかる。TTFB は静的シェルの配信の速さ、応答完了は約 200ms になる見込み。
+  - topcoat は両方をストリームするので、応答完了は 800ms（テストで実測済み）。**同じ「遅い upstream が 2 つ」でも、Next は流儀どおりに書くだけで 800ms が消える。**
+    ただし、その代わりに**ビルドが 500 件 × 800ms を払う**。並列に prerender されるので実時間はその何分の一かになるが、
+    `next build` の所要時間は supervisor 側で要計測。
+  - 関連商品の鮮度は `cacheLife('max')`（revalidate 30 日）で決まる。推薦を頻繁に変えたいなら `'hours'` などにする。
+    そうすると ISR がバックグラウンドで再生成し、そのリクエストだけ 800ms を払う。topcoat には、リクエストを跨いでキャッシュする仕組みが無い。
+  - レビューの差し込み自体には自前の Client JS は要らない（RSC のストリーム）。ただし React の runtime は全ページに載っている。
+- **所要時間の体感**: 実装 10 分、`setTimeout` の扱いを docs で探して 10 分。
+
+## 2026-11-03 [Next.js] #3 一覧の検索を `next/form` の GET + `searchParams` で書く
+
+- **書こうとしたこと**: 一覧に検索欄を足す。AGENTS.md の方針どおり、`next/form` の `<Form action="/products">`（GET）と、
+  Server Component が読む `searchParams` だけで作る。自前の Client Component は書かない。
+- **書き味**
+  - `<Form action="/products">` に hidden の `sort` / `category` と `q` の入力欄を入れるだけ。JS が無ければ普通の GET フォームで、
+    JS があればクライアント遷移になる（docs `form.md`）。topcoat 版で `raw!` と `history.replaceState` を使って手で書いた「URL との同期」は、
+    **そもそも URL が正なので要らない。** 検索結果のリンク（チップ、ページング）に `q` を載せる部分は、`productsUrl` に引数を 1 つ足しただけ。
+  - 入力の正規化（trim、64 文字で切る、空なら無し）は `topcoat/src/urls.rs` の `normalize_search` を移植した。
+    Rust の `chars().take(64)` に合わせ、`Array.from` でコードポイント単位に切っている。
+    `q` の percent-encode も `encode_query_value` に合わせ、`encodeURIComponent` が残す `!'()*` を追加でエンコードした。topcoat 版と URL が一致する。
+  - **検索欄の初期値も URL 依存なので、境界の中に置く必要があった。** 見出しの行に `<Suspense fallback={空の SearchForm}>` を置き、
+    中で `searchParams` を await して値入りの `SearchForm` を返す。結果側の `<Suspense>` と合わせ、同じ Promise を 2 か所で await している。
+    静的シェルには空の検索欄が入る。差し替えまでの間に入力した文字は、差し替えで消える（ストリームは速いので実害は小さいはず）。
+  - `cacheComponents` 有効時は、遷移後も前のルートが `<Activity>` で保持される。`defaultValue` だけだと、`?q=a` から `?q=b` へ遷移しても
+    入力欄が古い値のまま残りうる。そこで、input に `key={search}` を付けて作り直させた。docs によれば `<Form>` 自体に `key` は渡せない。
+- **topcoat との差（挙動）**
+  - topcoat は**1 文字ごとに** shard を POST で描き直す。Next は **Enter で確定**して遷移する。逐次検索にするなら、
+    Client Component で `useRouter().replace` を debounce して呼ぶことになる。その分 JS が増え、流儀としては一段複雑になる。今回は採らなかった。
+  - 結果は `getProductsPage(page, sort, category, search)`（`'use cache'`）が返す。同じ検索語の 2 回目は、インスタンスのメモリから返る。
+    `partialPrefetching` 下では `<Form>` の prefetch は App Shell（見出しと空の検索欄）だけで、結果は遷移後に取りに行く見込み。
+- **気づき（配信されるもの・予想）**
+  - `next/form` は `'use client'` の部品（`next/dist/client/form.js`）なので、その分の Client JS が一覧ページに載る。
+    自前の JS はゼロ。topcoat は runtime JS（gzip 約 15KB）と、shard の引数として埋め込まれる JS 式を配る。
+  - 検索結果は毎回リクエスト時のストリームになる（`searchParams` 依存）。0 件時は「0 products matching “…”」と「No products found.」を出す。文言は topcoat と同じ。
+- **所要時間の体感**: 実装 15 分。topcoat 版で詰まった URL 同期と JS の式検査が、丸ごと不要だった。
+
+## 2026-11-03 [Next.js] #4 カートを Server Action + `cookies()` で実装する
+
+- **書こうとしたこと**: 詳細の「Add to cart」、`/cart` での数量変更・削除、ヘッダーの件数表示。topcoat 版と同じく、状態は cookie に置く。
+  cookie の値も topcoat と同じ形式 `[[id,qty],…]` の JSON にした（上限は 50 行・各 99 個）。
+- **書き味**
+  - `'use server'` のファイル（`src/app/cart/actions.ts`）に `addToCart(formData)` / `updateCart(formData)` を書き、
+    `<form action={addToCart}>` に渡すだけ。JS が無い場合は、hidden の action ID 付きの普通の POST になる（docs `forms.md`）。
+    topcoat の「フォーム POST + `#[route(POST)]` + 303」とほぼ同じ量で書け、ルートを別に切る必要もない。
+  - Add to cart は `redirect('/cart')`（AGENTS.md の決定どおり）。
+  - 数量変更は `redirect` を書かなかった。docs（`mutating-data.md`）によれば、**Server Action の中で cookie を set すると、
+    Next が現在のページとレイアウトをサーバーで描き直す**。JS ありなら、ページ遷移なしでカートとヘッダーの件数が同時に更新される。
+    topcoat は #541 のとおり、毎回文書全体を読み直す。
+  - React 19 では、`<form action={fn}>` の送信後に、非制御の入力欄がリセットされる。数量欄は `defaultValue` なので、
+    `key={quantity}` を付けて「サーバーから来た新しい数量で作り直す」ようにした。
+- **署名: Next.js の標準機能には無い**
+  - `cookies()` の API は `get` / `set` / `delete` だけで、署名や暗号化の手段は無い。docs で署名や暗号化が出てくるのは、
+    認証ガイドの「セッションを自前で暗号化する」例（`jose` などの外部ライブラリを使う）だけだった。
+  - そこで、**署名なし**の cookie にした。訪問者が書き換えられるのは自分のカートだけで、読むたびにカタログと照合する
+    （未知の id は捨てる、数量は 1〜99 に丸める、重複を捨てる、50 行で切る）。価格はカタログから引くので、cookie に価格は載らない。
+  - topcoat は署名付き cookie が標準で用意されているが、その代わり `COOKIE_KEY` を全インスタンスで揃える運用が要る（揃わないとカートが黙って消える）。
+    Next は鍵を持たないので、その運用も要らない。「標準で付いてくる安全装置」と「運用の手間」が逆の向きに出ている。
+  - CSRF: Server Action は Origin と Host（または `X-Forwarded-Host`）を比較し、不一致なら中断する（docs `data-security.md`）。
+    cookie は `HttpOnly` / `SameSite=Lax` / `Secure` / `Path=/` で、topcoat と同じ属性にした。
+- **詰まった点 / topcoat との差**
+  - **ヘッダーの件数がレイアウトにあるので、全ページに動的な穴が開く。** 件数は `cookies()` を読む小さな `CartCount` に閉じ込め、
+    `<Suspense fallback="Cart">` で包んだ。これで静的シェルは保たれる。ただし、#1 で完全に静的（`○`）だったホームと 500 件の詳細も、
+    **「静的シェル + リクエスト時の差し込み」（`◐`）になる**見込み。CDN から返せるのはシェルまでで、件数のために毎回サーバーが動く。
+    ページを完全に静的なまま保つなら、件数を Client Component にして、`HttpOnly` でない cookie を `document.cookie` から読む手もある。
+    ただし、AGENTS.md の方針（`cookies()` + `<Suspense>`）を優先した。topcoat はもともと全ページが動的なので、この差は出ない。
+  - `partialPrefetching` の docs には「`cookies()` を読むルートの App Shell はセッションのデータを含み、クライアントではセッションごとにキャッシュされる」とある。
+    件数が prefetch にどう載るか（古い件数が見えないか）は、supervisor の動作確認で見てほしい。
+  - **JS なしの数量変更は PRG にならない。** `redirect` しないので、POST の応答がそのまま `/cart` の HTML になる。リロードすると再送の確認が出るはずだ。
+    topcoat は 303 で GET に戻す。JS ありの体験を優先した流儀どおりの書き方と、JS なしの作法がずれる例。
+  - 未知の商品を Add to cart した場合、topcoat は 404 を返す。Next 版はカートを変えずに `/cart` へ redirect する。
+    Server Action の中で `notFound()` を投げたときの挙動が docs から読み取れなかったので、無視する方を選んだ。
+- **気づき（配信されるもの・予想）**
+  - `/cart`: 見出しとスケルトンが静的シェルで、中身はリクエスト時にストリームされる。
+  - フォームは Server Component のまま。自前の Client JS は増えない。ただし Server Action の呼び出しは React 側の仕組みに乗るので、
+    React の runtime が要る（それはもともと全ページに載っている）。
+- **所要時間の体感**: 実装 25 分。署名の有無と、件数の穴が全ページに広がる影響を docs で確かめて 10 分。
+
+## 2026-11-03 [Next.js] #5 在庫数を Route Handler の SSE + `EventSource` で live 更新する
+
+- **書こうとしたこと**: 詳細ページに在庫数を出し、5 秒ごとに更新する。値の計算式は `topcoat/src/stock.rs` を移植し、
+  同じ時刻なら topcoat 版と同じ値になるようにする。
+- **計算式の移植**
+  - SplitMix64 は 64 bit の wrapping 演算なので、`number`（53 bit）では書けない。`BigInt` で書き、各演算の後に `& (2^64 - 1)` で丸めた。
+    `saturating_sub(6)` は「負なら 0」に置き換えた。
+  - 移植の確認: `stock.rs` の関数部分をそのまま切り出した scratch の Rust（`rustc --edition 2024`）と、`src/lib/stock.ts` を node で読み込んだ結果を比べた。
+    id 5 種 × 時刻 5 点（スロット境界の前後を含む）の `stock_at` / `until_next_change` が、**25 行すべて一致**した。
+    プロジェクトのテストには入れていない（Next 版にはテストランナーを入れていないため）。
+  - **create-next-app の `tsconfig.json` は `target: ES2017` なので、`BigInt` リテラル（`1n`）が型エラーになる**（TS2737）。
+    `ES2020` に上げた。noEmit なので出力には影響しない（変換は SWC が受け持つ）。
+    ただし、上げた直後の `tsc --noEmit` は**同じエラーを出し続けた**。`incremental: true` の `tsconfig.tsbuildinfo` が古い診断を持っていたためで、
+    ファイルを消すと通った。
+- **書き味**
+  - Route Handler（`src/app/api/stock/[id]/route.ts`）は `ReadableStream` を返すだけ。最初に `retry: 1000` と現在値を送り、
+    以後は `setTimeout(send, untilNextChange(now))` で次のスロット境界ごとに 1 行ずつ送る。topcoat の `live!` の loop と同じ形になった。
+    `request.signal` の abort でタイマーを止める。
+  - `export const maxDuration = 300` を付けた。ストリームは、それより 10 秒早く自分から閉じる。`EventSource` は閉じられると
+    `retry` の 1 秒後に再接続し、サーバーは接続時に現在値を送り直す。状態を持たない設計なので、再接続で値がずれない（topcoat と同じ性質）。
+  - **`next start` の gzip がイベントを溜め込む恐れがある**。Next は内部で `compression` パッケージ（`next/dist/compiled/compression`）を使っている。
+    `Cache-Control: no-cache, no-transform` を付けた。`compression` は `no-transform` を見ると圧縮を飛ばすので、溜め込みも起きないはず。
+    実際にイベントが 5 秒ごとに届くかは supervisor の確認待ち。
+  - 表示側は `'use client'` の `StockLevel` で、`useEffect` の中で `EventSource` を開き、`onmessage` で state を更新するだけ。
+    `cacheComponents` では、遷移で隠れたルートの effect が片付けられる（docs `cacheComponents.md` の "Navigation with Activity"）。
+    そのため、ページを離れると接続も閉じる。
+  - **初期値は静的 HTML に入れられない**（時刻に依存するため）。`<Suspense>` の中の Server Component で `connection()` の後に時計を読み、
+    現在値を `initialLevel` として Client Component に渡した。JS が無くても、その時点の在庫は見える。
+- **詰まった点: `react-hooks/purity` が Server Component の `Date.now()` を弾いた**
+  - `await connection()` の後で `stockAt(id, Date.now())` を JSX に書いたところ、`pnpm lint` が
+    ``Error: Cannot call impure function during render`` を出した（eslint-config-next 16.4.4 が使う `eslint-plugin-react-hooks` 7.1.1）。
+  - この lint は、Server Component がリクエストごとに 1 回しか描画されないことも、`connection()` で「リクエスト時に限る」と宣言したことも知らない。
+    docs は「`connection()` の後なら `Date.now()` を使ってよい」と書いているので、**docs が勧める書き方を、同梱の lint が止める**形になった。
+  - 時計を読む処理を `currentStock(id)`（`connection()` + `Date.now()`）として `src/lib/stock.ts` に移して回避した。
+    `fetchReviews` と同じく「関数自身がリクエスト時専用だと宣言する」形になり、結果的に読みやすくはなった。
+- **transport と Vercel での考察**
+  - SSE は**ブラウザのタブ × 商品ごとに HTTP 接続を 1 本**持つ。HTTP/1.1 では、同じオリジンへの同時接続が 6 本までなので、
+    詳細ページを 6 タブ開くと他のリクエストが詰まりうる（HTTP/2 なら多重化される）。topcoat は文書ごとに WebSocket を 1 本開き、その上で run を多重化する。
+  - Vercel の Functions では、SSE の接続中、関数がずっと占有される（上限は `maxDuration`）。在庫の値は**時刻から決まり、5 秒間は誰が見ても同じ**だ。
+    そのため、`GET /api/stock/1` を「次の境界まで `s-maxage`」で返す **polling** にすれば、ほぼすべてのリクエストが CDN で返り、関数は 5 秒に 1 回しか動かない。
+    「サーバーから押す」より「CDN にキャッシュされた値を引く」方が、Vercel の課金と構造に素直に乗る。今回は topcoat の `live!` と同じ土俵で比べるため、SSE のまま実装した
+    （AGENTS.md の方針どおり。SSE が Vercel で実際に何秒保つかは未決事項のまま）。
+- **気づき（配信されるもの・予想）**
+  - 詳細ページの動的な穴は 3 つになった（在庫の初期値、レビュー、ヘッダーのカート件数）。関連商品を含め、それ以外は静的 HTML のまま。
+  - Client JS: `StockLevel`（`useState` + `useEffect` + `EventSource`、自前のコードは数十行）のチャンクが、詳細ページだけに載る。
+    topcoat の runtime は全ページに載るので、ここは Next の「必要な所だけ Client Component」が効く。
+  - SSE の 1 イベントは `data: 23\n\n` の数バイト。topcoat は WebSocket の JSON フレームで、描画済みの HTML 片を送る。
+- **所要時間の体感**: 移植と突き合わせで 15 分、Route Handler と Client Component で 15 分、lint の回避で 5 分。
+
+## 2026-11-03 [Next.js] #6 商品画像を `next/image` + `sizes` で配信する
+
+- **書こうとしたこと**: topcoat 版と同じ 24 枚（1600×1600、約 290KB）を、同じ規則 `{category_slug}-{(id % 3) + 1}.jpg` で割り当てる。
+  一覧カード・関連商品・詳細の主画像・カートのサムネイルに出す。
+- **素材の持ち込み**
+  - `public/` 配下しか静的配信されないので、`scripts/copy-data.mjs` で `../data/images/*.jpg` を `public/images/` へコピーし、
+    `predev` / `prebuild` から呼ぶ。コピー先は gitignore した。symlink は使っていない（AGENTS.md の決定）。
+  - `next.config.ts` の `images.localPatterns` を `{ pathname: '/images/**', search: '' }` に絞った。それ以外のパスや、クエリ付きの最適化要求は 400 になる。
+    `qualities` は Next 16 から必須で、`[75]` だけにした。
+- **書き味**
+  - **500 商品 → 画像の対応は、文字列のパスを組み立てるだけ。** `src/lib/images.ts` は、カテゴリの集合と 1 行の template literal で済んだ。
+    topcoat の `asset!` は文字列リテラルしか受け取れないので、24 枚の const 表を書き、表と実ファイルの一致をテストで守った。
+    Next では、パスが実在しない場合の検出が「実行時の 404（最適化 API の 400 / 404）」まで遅れる。表と実ファイルの一致は、型でもビルドでも検査されない。
+  - `<Image src width={1600} height={1600} sizes=… className="h-32 w-full object-cover">` と書くと、`srcset` は `deviceSizes` と `imageSizes` から自動で作られる。
+    `sizes` はレイアウトから手計算した。グリッドは 72rem のコンテナに 2 / 3 / 4 列なので、
+    `"(min-width: 1024px) 262px, (min-width: 768px) 33vw, 50vw"` とした。関連商品は 2 / 4 列、詳細の主画像は `lg` で 2 列（約 540px）。
+    カートは `80px` 固定。Tailwind のクラスと `sizes` の文字列が別々に存在し、ずれても何も教えてくれない。そこは topcoat と同じく人間の責任になる。
+- **`preload` / `loading` / `fetchPriority` の使い分け**
+  - Next 16 で `priority` は非推奨になり、`preload` に置き換わった。一覧の先頭カードだけ `preload` にした（AGENTS.md の方針）。
+  - ただし docs（`image.md`）は、「たいていの場合は `preload` ではなく `loading="eager"` か `fetchPriority="high"` を使え」
+    「ビューポートによって LCP 候補が変わる場合は `preload` を使うな」とも書いている。
+    また、**一覧のグリッドは `searchParams` 依存の `<Suspense>` の中にある**ので、`<head>` はすでに送り終わっている。
+    App Router の Image は `ReactDOM.preload` を呼ぶ（`next/dist/client/image-component.js`）。ストリームの途中では `<link rel="preload">` を `<head>` に入れられず、
+    `<img>` と同じチャンクで届くはずだ。その場合、preload の効果はほぼ無いと予想する。supervisor の Lighthouse で確認してほしい。
+  - 詳細の主画像（LCP 候補）は、docs の勧めどおり `loading="eager"` + `fetchPriority="high"` にした。カートのサムネイルは、topcoat の修正と同じ理由で eager にした。
+    `preload` と `loading` / `fetchPriority` は併用しないよう、`ProductPhoto` の中で排他にした。
+- **気づき（配信されるもの・予想）**
+  - 画像は `/_next/image?url=%2Fimages%2Faudio-1.jpg&w=640&q=75` のような URL で、要求された幅に縮小され、Accept に応じて WebP などに変換される。
+    h-32 のカードには、2x DPR でも 640px 前後が選ばれるはずで、topcoat の原寸 290KB に対して 1 枚あたり数十 KB になる見込み。一覧 1 ページの画像総量は、桁で減るはずだ。
+  - **最適化はサーバーの CPU で行われる**（初回のみ。結果は `.next/cache/images` に保存される）。standalone / docker では sharp が要る。
+    pnpm 11 では、`pnpm-workspace.yaml` の `allowBuilds` で `sharp: true` を明示した（公式ベンチは画像を使わないので `false` だった）。
+    Vercel では最適化は Vercel 側で行われ、関数の CPU は使わない。stateless・複数インスタンスのコンテナでは、インスタンスごとにキャッシュが温まるまで初回変換を払う。
+  - `next/image` は `'use client'` の部品（`next/dist/client/image-component.js`）なので、画像を使うページには、その分の Client JS が載る。
+    `onLoad` などを渡していないので、描画は Server Component から HTML として出る。JS は主にハイドレーションのためのもの。
+- **所要時間の体感**: 実装 15 分、`sizes` の手計算と `preload` の docs 読みで 15 分。

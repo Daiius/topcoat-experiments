@@ -1,0 +1,11 @@
+/node_modules
+/.next/
+/out/
+*.tsbuildinfo
+next-env.d.ts
+.env*
+.vercel
+
+# Copied from ../data by scripts/copy-data.mjs before dev/build/typecheck/lint.
+/public/images/
+/src/generated/
