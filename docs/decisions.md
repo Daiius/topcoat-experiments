@@ -35,3 +35,4 @@
 | D28 | 11-03 | 自律 | 負荷計測ツールは oha（`cargo install oha`）。公式ベンチと同じツール | k6/oha 未導入。公式 bench.sh と揃える |
 | D29 | 11-03 | 自律 | topcoat イメージの既定 `PORT=80`（Vercel 公式 Rust ガイドに合わせる。nonroot でも Docker 20.10+ は bind 可）。計測は compose で 8080 | Vercel は既定で 80 番へ転送 |
 | D30 | 11-03 | 自律 | `bench/results/` は gitignore、記事で引用する回の summary だけ `git add -f` | 結果ディレクトリの肥大を避ける |
+| D31 | 11-03 | 自律 | ローカル docker 計測 1 回目を記事素材として保存（cpus=1/mem 2g、自前ホスト同士） | Vercel のエッジ配信は朝以降のデプロイで別途 |

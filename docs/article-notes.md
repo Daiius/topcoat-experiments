@@ -86,3 +86,30 @@ Zenn 記事を別セッションで書くための素材。**実測値・確認�
 - 一覧のストリーム途中、Suspense フォールバックとストリーム後の両方に検索 input が一瞬 2 つ存在（フォールバックに input を描いているため）。
   差し替え前に入力した文字は失われうる → 「静的シェルに何を入れるか」の設計判断の例
 - 検索は Enter 確定（`next/form` GET）。topcoat の shard は入力ごとの部分再描画。**同じ「検索」でも流儀に沿うと UX が変わる**
+
+## 7. ローカル docker 計測（`bench/results/20261103-024909/summary.md`）
+
+条件: Ryzen 7 8745H、rootless docker、**各コンテナ cpus=1 / mem 2g**（Vercel Hobby 相当）、oha 20s×32 並列 / 200rps、
+load generator は同一ホスト。Next.js は `next start` 相当の standalone 自前ホスト（**Vercel の CDN/PPR エッジ配信は含まない**）。
+
+| 指標 | topcoat | Next.js | 読み方 |
+|---|---|---|---|
+| イメージ（圧縮） | 18.5 MiB（展開 64.7MB） | 77.4 MiB（展開 350MB） | distroless/cc + 単一バイナリ vs distroless/nodejs + standalone |
+| 初回ビルド（DL 込み） | 207s | 76s | topcoat は topcoat-cli をソースからビルドする分が大きい |
+| コールドスタート（docker start→初 200） | 184ms（うち docker start 174ms） | 696ms | アプリ起動は topcoat ≒10ms / Node ≒500ms |
+| メモリ idle → 負荷後 | 12.3 → 26.9 MiB | 92.6 → 279.5 MiB | |
+| `/` 最大 RPS（1 CPU） | 5,677（p99 7ms） | 95（p99 789ms） | Next は全ページに「カート件数」の動的な穴 → **自前ホストでは毎リクエスト resume 描画** |
+| `/products` 最大 RPS | 2,437 | 65 | 同上 + RSC ペイロード込みの 329KB HTML |
+| `/products/1` 最大 RPS | **40**（800ms 待ち × 32 並列で上限） | 90 | topcoat は関連商品を毎回待つ。Next は `'use cache'` で焼いた分だけ待たない＝**設計差がそのままスループット差** |
+| `/products/1` ストリーム | 3 回: 1.1ms（シェル）/ 202ms（レビュー）/ 802ms（関連） | 2 回: 4ms（シェル+関連）/ 210ms（レビュー） | |
+| HTML（br/gzip） | `/` 2.2KB, `/products` 3.8KB | `/` 12.3KB, `/products` 18.5KB（gzip。standalone は br 非対応） | |
+| JS | 1 本 47KB / 15KB | 8 本 580KB / 179KB | |
+| 画像（`/products` 1 ページ分） | **4.2MB**（1600px 原寸 ×15） | **33KB**（`/_next/image` 縮小 + lazy） | topcoat に画像最適化が無いことの実害が最も大きい項目 |
+| 未知 id | 404（**本文 0 バイト**） | 初回 200（noindex、シェル先行）、2 回目以降 404 | |
+
+所見（記事の論点候補）:
+- **素の SSR の効率は topcoat が桁違い**（RPS 25〜60 倍、メモリ 1/10）。ただし Next は「動的な穴 1 つ（ヘッダーのカート件数）」で
+  全ページが resume 描画になっており、自前ホストでは PPR の静的シェルの恩恵が CPU 面で出ない。Vercel ではシェルがエッジから返るはず → 要デプロイ検証
+- **Next の強みは「キャッシュして待たない」設計を API が後押しすること**（`'use cache'`）。topcoat は待つしかなく、遅い依存がそのまま並列度を食う
+- **フロントエンド配信物は Next が重い（JS 12 倍）が、画像は Next が圧倒的に軽い**。topcoat で同等にするには事前リサイズ + `srcset` を自作
+- `/products?q=` の topcoat p99 42ms は他より揺れが大きい（max モード）。要再計測
