@@ -228,7 +228,14 @@ mod tests {
         assert!(!html.contains(&first), "{html}");
     }
 
-    /// Every cart row gets its product's image, loaded eagerly.
+    /// The `<img>` tags of `html`, in document order.
+    fn img_tags(html: &str) -> Vec<&str> {
+        html.match_indices("<img ")
+            .map(|(at, _)| &html[at..at + html[at..].find('>').unwrap()])
+            .collect()
+    }
+
+    /// Every cart row gets its product's image, loaded eagerly at 80px.
     #[tokio::test]
     async fn cart_rows_show_their_thumbnails_eagerly() {
         let router = test_router();
@@ -236,24 +243,56 @@ mod tests {
         let (_, cookie) = post(&router, "/cart/add", "product_id=42", cookie.as_deref()).await;
         let html = get(&router, "/cart", cookie.as_deref()).await;
         let catalog = Catalog::load();
-        for id in [1, 42] {
+        let tags = img_tags(&html);
+        assert_eq!(tags.len(), 2, "{html}");
+        for (tag, id) in tags.into_iter().zip([1, 42]) {
             let product = catalog.get(id).unwrap();
-            let file = format!(
-                "https://assets.test/{}-{}.jpg",
+            let stem = format!(
+                "https://assets.test/{}-{}",
                 product.category_slug,
                 id as usize % crate::images::VARIANTS + 1
             );
-            let tag = format!("<img src=\"{file}\" alt=\"{}\"", product.name);
-            let at = html
-                .find(&tag)
-                .unwrap_or_else(|| panic!("{tag} missing from {html}"));
-            let end = at + html[at..].find('>').unwrap();
-            assert!(
-                html[at..end].contains("loading=\"eager\""),
-                "{}",
-                &html[at..end]
-            );
+            assert!(tag.contains(&format!("src=\"{stem}-640.webp\"")), "{tag}");
+            assert!(tag.contains(&format!("{stem}-320.webp 320w, ")), "{tag}");
+            assert!(tag.contains(&format!("{stem}-1600.webp 1600w\"")), "{tag}");
+            assert!(tag.contains("sizes=\"80px\""), "{tag}");
+            assert!(tag.contains("loading=\"eager\""), "{tag}");
+            assert!(!tag.contains("fetchpriority"), "{tag}");
         }
+    }
+
+    /// Only the likely LCP image is fetched eagerly with high priority:
+    /// the first card of the list and the detail page's main photo.
+    #[tokio::test]
+    async fn only_the_lcp_candidate_gets_high_priority() {
+        let router = test_router();
+        let html = get(&router, "/products", None).await;
+        let tags = img_tags(&html);
+        assert!(tags.len() > 1, "{html}");
+        assert!(tags[0].contains("fetchpriority=\"high\""), "{}", tags[0]);
+        assert!(tags[0].contains("loading=\"eager\""), "{}", tags[0]);
+        for tag in &tags[1..] {
+            assert!(!tag.contains("fetchpriority"), "{tag}");
+            assert!(tag.contains("loading=\"lazy\""), "{tag}");
+        }
+        for tag in &tags {
+            assert!(
+                tag.contains(&format!(
+                    "sizes=\"{}\"",
+                    crate::app::_components::GRID_IMAGE_SIZES
+                )),
+                "{tag}"
+            );
+            assert!(tag.contains("width=\"1600\" height=\"1600\""), "{tag}");
+        }
+
+        let html = get(&router, "/", None).await;
+        assert!(!html.contains("fetchpriority"), "{html}");
+
+        let html = get(&router, "/products/1", None).await;
+        let main = img_tags(&html)[0];
+        assert!(main.contains("fetchpriority=\"high\""), "{main}");
+        assert!(main.contains("sizes=\"(min-width: 1152px) 540px"), "{main}");
     }
 
     #[tokio::test]

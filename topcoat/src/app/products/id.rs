@@ -8,8 +8,8 @@ use topcoat::{
 
 use crate::{
     app::_components::{
-        breadcrumbs, product_card, product_card_skeleton, product_photo, rating_stars, review_list,
-        review_list_skeleton, spec_table,
+        RELATED_IMAGE_SIZES, breadcrumbs, product_card, product_card_skeleton, product_photo,
+        rating_stars, review_list, review_list_skeleton, spec_table,
     },
     cart::MAX_QUANTITY,
     catalog::{Catalog, format_rating},
@@ -33,11 +33,12 @@ async fn product_detail(cx: &Cx) -> Result<impl View> {
             name: &product.name
         )
         <div class="mt-6 grid gap-10 lg:grid-cols-2">
-            // The likely LCP element: load it eagerly.
+            // The likely LCP element: load it eagerly, with high priority.
             product_photo(
                 product: product,
                 frame: "aspect-square rounded-2xl",
-                eager: true
+                sizes: "(min-width: 1152px) 540px, (min-width: 1024px) 50vw, 100vw",
+                priority: true
             )
             <div>
                 <p class="text-sm font-medium uppercase tracking-wide text-slate-400">
@@ -166,7 +167,7 @@ async fn related(cx: &Cx, product_id: u32) -> Result<impl View> {
     Ok(view! {
         <div class="mt-6 grid grid-cols-2 gap-6 md:grid-cols-4">
             for product in &related {
-                product_card(product: product)
+                product_card(product: product, sizes: RELATED_IMAGE_SIZES)
             }
         </div>
     })
