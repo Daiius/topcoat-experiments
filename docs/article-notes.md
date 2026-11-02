@@ -143,3 +143,26 @@ load generator は同一ホスト。Next.js は `next start` 相当の standalon
 - **LCP は画像最適化の有無で決まる**。topcoat は原寸配信のため Slow 4G で 8.6 秒。フレームワークの差というより
   「最適化を標準で持つか」の差 → topcoat で手書きするとどれだけの手間で追いつけるかを実験（下記 9）
 - Next の LCP 340〜360ms（回線制限なし）は画像最適化 API の初回変換待ちを含む可能性（キャッシュ無効で毎回 `/_next/image`）
+
+## 9. 実験: topcoat で画像最適化を手書きする（`exp/topcoat-images` → main に merge）
+
+- 手間: 変換スクリプト 55 行（PIL、320/640/960/1600w の WebP、q75）+ 本番コード約 125 行（純増約 40 行、const 表を `macro_rules!` 化）+ テスト約 120 行。
+  所要約 35 分（Next.js の画像実装とほぼ同じ時間）。Next.js は画像ごとに `sizes` 1 行
+- 気づき: `asset!` は `macro_rules!` なので `concat!` でパスを組める（当初の「リテラルのみ」は誤り、journal を訂正済み）。`build.rs` 不要
+- `<head>` にタグを足す API が 0.11.0 に無い → `<link rel=preload>` は出せず `fetchpriority=high` のみ
+- 限界: 幅 4 種固定・WebP のみ（AVIF 交渉なし）・原画変更時は手で再生成。**ビルド時に全部決める**ので実行時の変換コストと課金はゼロ
+
+| 指標 | 原寸 JPEG（前） | 手書き最適化（後） | Next.js |
+|---|---|---|---|
+| イメージ（展開） | 64.7MB | **52.8MB** | 350MB |
+| `/products` 画像転送 | 4,234KB | **31KB** | 38KB |
+| `/products` LCP（制限なし） | 60ms | 32ms | 360ms |
+| `/products` LCP（Slow 4G + CPU 4x） | 8,648ms | **400ms** | 796ms |
+| `/` LCP（Slow 4G + CPU 4x） | 8,680ms | 568ms | 720ms |
+| `/products/1` LCP（Slow 4G + CPU 4x） | 1,844ms | 436ms | 464ms |
+| `/products` 最大 RPS（1 CPU） | 2,437 | 2,014（URL 解決が 1 カード 4 回増えた分） | 65 |
+| メモリ（負荷後） | 26.9MiB | 22.8MiB | 279.5MiB |
+
+所見: **画像の差はフレームワークの能力差ではなく「標準で持っているか」の差**。topcoat でも 35 分の手書きで Next.js 以上の LCP に届く。
+ただし Next.js は「画像を足すたびに何も考えなくてよい」のに対し、topcoat は「画像の追加・変更のたびにスクリプトを回す」運用が残る。
+（Next の LCP には `/_next/image` の実行時変換が含まれる。Vercel ではエッジキャッシュに載るので、デプロイ後に再比較）

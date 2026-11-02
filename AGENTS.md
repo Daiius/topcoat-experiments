@@ -45,7 +45,7 @@
 | 3 | 一覧の検索 | `#[shard]` 部分再描画 | Client Component または searchParams |
 | 4 | カート（追加・数量変更・表示） | handler/`#[procedure]` + cookie | Server Action + cookie |
 | 5 | 在庫の live 更新 | `live!` + `connected()`（transport は **WebSocket**） | Route Handler SSE（Next は WebSocket を Route Handler で扱えない） |
-| 6 | 商品画像 | `asset!`（最適化なし） | `next/image` |
+| 6 | 商品画像 | `asset!` + 事前リサイズ WebP（`scripts/gen_variants.py`）の `srcset`/`sizes` を手書き（当初は原寸配信） | `next/image` |
 
 ## Next.js 版の実装方針（2026-11 時点の推奨構成）
 
