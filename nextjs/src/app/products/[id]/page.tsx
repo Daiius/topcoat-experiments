@@ -6,14 +6,9 @@ import { ProductCard } from "@/components/product-card";
 import { RatingStars } from "@/components/rating-stars";
 import { ReviewList } from "@/components/review-list";
 import { SpecTable } from "@/components/spec-table";
-import {
-  formatPrice,
-  formatRating,
-  getProduct,
-  getProductIds,
-  initials,
-  lookupProducts,
-} from "@/lib/catalog";
+import { ReviewListSkeleton } from "@/components/skeletons";
+import { formatPrice, formatRating, getProduct, getProductIds, initials } from "@/lib/catalog";
+import { fetchRelated, fetchReviews } from "@/lib/remote";
 
 // All 500 products are prerendered at build time. Any other ID gets the
 // App Shell (the fallback below) and resolves at request time.
@@ -37,8 +32,6 @@ async function ProductDetail({ params }: Pick<PageProps<"/products/[id]">, "para
   if (!product) {
     notFound();
   }
-  const related = lookupProducts(product.related_ids);
-
   return (
     <>
       <Breadcrumbs
@@ -75,17 +68,37 @@ async function ProductDetail({ params }: Pick<PageProps<"/products/[id]">, "para
       </section>
       <section className="mt-16">
         <h2 className="text-2xl font-bold tracking-tight">{`Reviews (${product.review_count})`}</h2>
-        <ReviewList reviews={product.reviews} />
+        {/* Fresh data: the skeleton ships in the static HTML, the reviews
+            stream in at request time. */}
+        <Suspense fallback={<ReviewListSkeleton count={Math.min(product.review_count, 3)} />}>
+          <Reviews productId={product.id} />
+        </Suspense>
       </section>
       <section className="mt-16">
         <h2 className="text-2xl font-bold tracking-tight">Related products</h2>
-        <div className="mt-6 grid grid-cols-2 gap-6 md:grid-cols-4">
-          {related.map((entry) => (
-            <ProductCard key={entry.id} product={entry} />
-          ))}
-        </div>
+        {/* Cached data, no boundary: resolved at build time and part of the
+            static HTML, so the 800ms never reaches a visitor. */}
+        <Related productId={product.id} />
       </section>
     </>
+  );
+}
+
+/** Reviews come from a slow, uncached service, so they stream in. */
+async function Reviews({ productId }: { productId: number }) {
+  const reviews = await fetchReviews(productId);
+  return <ReviewList reviews={reviews} />;
+}
+
+/** Recommendations come from an even slower service, but are cached. */
+async function Related({ productId }: { productId: number }) {
+  const related = await fetchRelated(productId);
+  return (
+    <div className="mt-6 grid grid-cols-2 gap-6 md:grid-cols-4">
+      {related.map((entry) => (
+        <ProductCard key={entry.id} product={entry} />
+      ))}
+    </div>
   );
 }
 

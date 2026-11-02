@@ -375,3 +375,32 @@
   - Client JS: Client Component はまだ自前で書いていない。それでも React と Next のルーター、`<Link>` の分が全ページに載る。
     topcoat の runtime（gzip 約 15KB）との比較は supervisor の計測待ち。
 - **所要時間の体感**: 雛形と依存の固定で 15 分、docs（`node_modules/next/dist/docs` に同梱）の読み込みで 20 分、実装 20 分。
+
+## 2026-11-03 [Next.js] #2 レビューはストリーム、関連商品は `'use cache'` で静的シェルに焼く
+
+- **書こうとしたこと**: topcoat の #2 と同じ擬似 upstream（`src/lib/remote.ts`、遅延は `remote.rs` と同じ 200ms / 800ms）を使う。
+  レビューは鮮度が要るデータとしてリクエストごとに取得し、関連商品は共有してよいデータとしてキャッシュする。
+- **書き味**
+  - 差分は小さい。レビューは「async Server Component を `<Suspense fallback={<ReviewListSkeleton …/>}>` で包む」だけで、
+    topcoat の `suspense(fallback: …, reviews(…))` と同型。
+  - 関連商品は、取得関数 `fetchRelated` の先頭に `'use cache'` と `cacheLife('max')` を書くだけ。
+    **`<Suspense>` で包む必要すら無い。** ビルド時の prerender が 800ms を待って結果を HTML に焼くので、訪問者は待たない。
+    「遅いが共有できるデータは、キャッシュして遅延を消す」が、関数 1 つへの 2 行で書ける。この点は Next の流儀がはっきり効いている。
+  - 見出し「Reviews (n)」とスケルトンの枚数（`min(review_count, 3)`）は、topcoat と同じく即座に分かる値から決めた。
+- **詰まった点: タイマーは「リクエスト時のデータ」と見なされるのか**
+  - docs の例は、どれも「キャッシュしない `fetch`」で、それだけでリクエスト時扱いになる。一方、擬似遅延の `setTimeout` を
+    prerender がどう扱うか（待つのか、穴にするのか、エラーにするのか）は docs から読み取れなかった。
+  - そこで `fetchReviews` の先頭で `await connection()` を呼び、「これはビルド時には実行しない」と明示した
+    （docs の "Random values and timestamps" で、リクエストごとの値に使う手段）。本物の upstream なら `fetch` なので、この 1 行は要らない。
+  - `fetchRelated` 側は `'use cache'` の中で `setTimeout` を待つ。キャッシュの充填は prerender 中に待たれる（docs `use-cache.md` によれば、解決しない Promise を待ち続けた場合は 50 秒でビルドがタイムアウトする）。
+- **気づき（配信されるもの・予想）**
+  - 列挙済みの `/products/1` の HTML には、ビルド時の時点で**関連商品カードまで入っている**。レビュー部分はスケルトンで、
+    その後、同じ応答の中で RSC の差し込み（`<template>` + インライン `<script>`）がストリームされる。
+    レビューは `connection()` を呼んでいるため、リクエストごとに 200ms かかる。TTFB は静的シェルの配信の速さ、応答完了は約 200ms になる見込み。
+  - topcoat は両方をストリームするので、応答完了は 800ms（テストで実測済み）。**同じ「遅い upstream が 2 つ」でも、Next は流儀どおりに書くだけで 800ms が消える。**
+    ただし、その代わりに**ビルドが 500 件 × 800ms を払う**。並列に prerender されるので実時間はその何分の一かになるが、
+    `next build` の所要時間は supervisor 側で要計測。
+  - 関連商品の鮮度は `cacheLife('max')`（revalidate 30 日）で決まる。推薦を頻繁に変えたいなら `'hours'` などにする。
+    そうすると ISR がバックグラウンドで再生成し、そのリクエストだけ 800ms を払う。topcoat には、リクエストを跨いでキャッシュする仕組みが無い。
+  - レビューの差し込み自体には自前の Client JS は要らない（RSC のストリーム）。ただし React の runtime は全ページに載っている。
+- **所要時間の体感**: 実装 10 分、`setTimeout` の扱いを docs で探して 10 分。
