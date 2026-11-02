@@ -109,7 +109,7 @@
   生成は決定的にした（同じスクリプトから同じバイト列が出る）。
   `Image.effect_noise` は C 側の乱数を使い、実行のたびに出力が変わる。そのため、シード付きの `random.Random.randbytes` でノイズを作った。
 - **500 商品 → 静的アセットの対応づけ**
-  - `asset!` の引数は**文字列リテラルだけ**。`format!` や `concat!` で組み立てたパスは渡せない。
+  - `asset!` の引数は**文字列リテラルだけ**。`format!` や `concat!` で組み立てたパスは渡せない。（→ 訂正: `concat!` は渡せる。後述「[topcoat][実験] #6」参照）
     コンパイル時に ID を計算し、バイナリに宣言を埋め込んで bundler が拾う仕組みだからだ。
     そのため、動的な id から引くには「全ファイルを 1 回ずつ `asset!` で宣言した const 表」を書き、実行時に添字で引くしかない
     （`src/images.rs` の `IMAGES: [(&str, [Asset; 3]); 8]`）。
@@ -626,3 +626,88 @@
   Next.js は Turbopack も SWC もネイティブバイナリ同梱の npm パッケージなので、ツールチェーンのダウンロードは依存の取得と一体になる。
   topcoat は Rust ツールチェーン（ベースイメージ）・CLI（`cargo install` でソースからビルド）・Tailwind CLI と、取得経路が 3 つに分かれる。
 - `docker buildx build --check` は両 Dockerfile とも警告なしだった。実ビルドは supervisor が行う。サイズと所要時間はその結果で埋める。
+
+## 2026-11-03 [topcoat][実験] #6 画像最適化（事前リサイズ + `srcset` / `sizes`）を手で書く
+
+- **書こうとしたこと**: ブラウザ計測（article-notes 8 節）で、topcoat の LCP 差の主因は画像だと分かった
+  （`/products` で画像 4.2MB、Slow 4G で LCP 8.6 秒）。Next.js の `next/image` と同等の最適化を topcoat で手書きし、
+  どれだけの手間でどこまで追いつけるかを記録する（D32）。ブランチは `exp/topcoat-images`。
+- **やったこと**
+  1. **事前リサイズ**: `scripts/gen_variants.py`（55 行）を追加した。`data/images/*.jpg` の 24 枚から、
+     幅 320 / 640 / 960 / 1600 の WebP（quality 75。Next 版の `qualities: [75]` に合わせた）を `data/images/variants/` に書き出す。
+     96 ファイルで合計 780KB。1 枚あたりの平均は 320w が 1.8KB、640w が 4.1KB、960w が 7.2KB、1600w が 20KB。
+     原寸 JPEG（約 290KB）に比べて、同じ 1600px でも 1/14 になる。合成画像は平坦な部分が多く、WebP が効きやすい。
+     実写ではもっと重くなる。出力は決定的（2 回生成して sha256 が一致）で、所要 6 秒。
+     既存の `data/images/*.jpg` は変えていない。Next.js 版はこれまでどおり原寸を `next/image` で縮小する。
+  2. **const 表**: 24 行 × 3 の手書き表（72 行）を、`macro_rules!` 2 つと 8 行の呼び出しに置き換えた。
+     ```rust
+     macro_rules! photo {
+         ($slug:literal, $n:literal) => { photo!($slug, $n, ["320", "640", "960", "1600"]) };
+         ($slug:literal, $n:literal, [$($width:literal),*]) => {
+             [$(asset!(concat!("../../data/images/variants/", $slug, "-", $n, "-", $width, ".webp"))),*]
+         };
+     }
+     const IMAGES: [(&str, [Photo; VARIANTS]); 8] = [category!("audio"), /* … */];
+     ```
+     - **#6 の記述の訂正**: `asset!` は proc macro ではなく `macro_rules!` で、`const PATH: &str = $path;` として受け取る
+       （`topcoat-asset/src/asset.rs`）。そのため **`concat!` で組み立てた const 文字列も渡せる**。
+       ドキュメントの「文字列リテラル」は「コンパイル時定数」の意味だった。`format!` は const でないので渡せない。
+     - `file!()`（AssetId と `../` の基準）は、マクロ展開の起点、つまり `images.rs` を指す。そのため相対パスは手書きのときと同じ基準で解決される。
+       debug ビルドのテストバイナリには、96 個のパスが埋め込まれていることを `grep -a` で確認した。bundler が拾えるかは supervisor の `topcoat asset bundle` で確かめる。
+     - **build.rs は使わなかった。** 生成ファイルを `include!` する場合の `file!()` の基準を調べる必要がなく、`macro_rules!` だけで済んだ。
+       ただし `concat!` は `const` を読めないので、幅を `WIDTHS` 定数とマクロ内のリテラルの 2 か所に書く必要がある。
+       スクリプトを入れると 3 か所になる。ずれはテストで検出する（表とディスクの突き合わせ、WebP ヘッダの幅と宣言幅の一致）。
+  3. **`product_photo`**: `srcset` は URL の列なので、`view!` 内で `Asset` を直接並べられない
+     （`src=(asset)` は描画時に解決されるが、`"url 320w, url 640w"` の文字列は自分で組み立てるしかない）。
+     そこで、`asset_config(cx).resolve(asset)` で URL を得て `format!` + `join` した。
+     `sizes` は必須の引数にした。`eager` と `priority`（`loading="eager"` + `fetchpriority="high"`）は `#[default]` 付きの省略可能な引数にした。
+     `width` / `height`（1600）は残した。
+  4. **表示箇所ごとの `sizes`**: Next 版と同じ文字列を使った。一覧とトップは `GRID_IMAGE_SIZES`（`product_card` の既定値）、
+     関連商品は `RELATED_IMAGE_SIZES`、詳細の主画像は `(min-width: 1152px) 540px, (min-width: 1024px) 50vw, 100vw`、カートは `80px`。
+  5. **LCP 候補**: Next 版の `preload` に合わせて、一覧の先頭カード（`index == 0`）と詳細の主画像だけを `priority` にした。
+     トップは Next 版も何もしていないので、揃えて何もしていない。カートは従来どおり `eager` だけにした。
+     - **`<link rel="preload">` は入れられなかった**: `<head>` は共有の `root_layout` が書いており、
+       ページから `<head>` に要素を差し込む API は 0.11.0 に無い（router / view を grep しても head 関連の仕組みは見当たらない）。
+       layout に「この要求の LCP 画像」を渡す経路を自作するか、レスポンスヘッダの `Link: <…>; rel=preload; as=image; imagesrcset=…` を
+       ページで付けるかになる。topcoat の HTML は小さく（`/products` で 3.8KB）、先頭の `<img>` は最初のチャンクに入るので、
+       プリロードスキャナがすぐ見つける。`fetchpriority="high"` で足りると判断し、どちらもやっていない。
+       Next 版は、Suspense の中で `preload` しても `<head>` に入らない（[Next.js] #6）。結局、両版とも実質は「`<img>` に優先度を付ける」だけになる。
+- **手間（定量）**: `git diff --stat`（コード）は 6 ファイルで +246 / −119。新規の `gen_variants.py` が 55 行、生成物が 96 ファイル・780KB。
+  内訳は次のとおり。
+
+  | 部分 | 行数（+/−） | 中身 |
+  |---|---|---|
+  | `scripts/gen_variants.py` | +55 | PIL でリサイズ + WebP 化 |
+  | `images.rs` の本体 | +65 / −71 | マクロ 2 つ、`ProductImage`（`fallback()` / `widths()`）、手書き表（72 行）の削除 |
+  | `images.rs` のテスト | +69 / −21 | 表とディスクの突き合わせ、WebP の幅検査、test helper の追随 |
+  | `_components.rs` | +50 / −8 | `srcset` の組み立て、`sizes` 定数 2 つ、`product_card` / `product_photo` の引数 |
+  | 呼び出し側（一覧・詳細・関連・カート） | +11 / −7 | `sizes` / `priority` を渡す |
+  | `app.rs` のテスト | +51 / −12 | カートの `srcset` / `sizes`、LCP 候補だけが `fetchpriority` を持つこと |
+
+  **Next.js の場合**: `<Image sizes="…">` に 1 属性を足すだけ（+ `sizes` 定数 2 つ、`preload` 1 か所）。
+  リサイズ・形式変換・`srcset` の生成・URL の解決は、フレームワークが全部やる。
+  topcoat では、その 4 つを**スクリプト（ビルド外）・マクロ・コンポーネント・テスト**に分けて自分で書いた。
+  **手で書いた量は、プロダクションコードの追加が約 125 行（マクロ化で手書き表 71 行が減ったので、削除を差し引いた正味は約 +40 行）、
+  スクリプトが 55 行、テストが約 120 行**。
+  `sizes` を手計算する手間と、Tailwind と `sizes` がずれても誰も教えてくれない点は、どちらも同じ。
+- **できなかったこと／Next との差（予想）**
+  - **配る幅の粒度**: Next は `deviceSizes` + `imageSizes`（16〜3840 の 16 段階）から選ぶ。topcoat 版は 4 段階だけ。
+    カートの 80px でも 320w（約 1.8KB）が届く。Next なら 96w か 128w になる。段階を増やすと、ファイル数もマクロのリテラルも増える。
+  - **形式の交渉**: Next は `Accept` を見て AVIF / WebP を返す。topcoat 版は WebP 固定（JPEG のフォールバックは置いていない）。
+    `<picture>` で AVIF を足すと、ファイル数とマークアップが倍になる。
+  - **原画の差し替え**: Next は原画を置けば済む。topcoat 版は `gen_variants.py` の再実行とコミットが要る。生成忘れはテストが落ちて分かる。
+- **ビルド時間・バイナリサイズの見込み（実測は supervisor）**
+  - `asset!` 1 個につき 2048B の `static`（`ENCODED_ASSET_SIZE`）がバイナリに載る。宣言が 24 → 96 個になったので、**バイナリは約 +144KB**。
+    const 評価は 96 回だが、proc macro ではないので、コンパイル時間への影響は小さいはずだ。
+    clippy の増分（`storefront-topcoat` だけ）では、体感の差は無かった。
+  - **asset bundle は小さくなる**: topcoat は原寸 JPEG（24 枚・6.7MB）を宣言しなくなった。bundle の画像は WebP 96 枚・約 0.8MB になる見込み。
+    docker イメージもその分軽くなるはず。`data/` 全体は builder に COPY されるが、runtime ステージには bundle だけが入る。
+  - **SSR の CPU**: カード 1 枚ごとに URL を 4 回解決し、`format!` + `join` する。`/products`（24 枚）なら、1 リクエストで約 100 回の小さな文字列確保が増える。
+    RPS にわずかに効く可能性がある。HTML も `srcset` の分だけ増える（1 枚あたり約 250B。br 圧縮後はわずか）。
+- **期待する配信（確認ポイント）**: 1280×900・DPR 1 なら、一覧カードは `sizes` が 262px なので 320w（約 1.8KB）、詳細の主画像は 540px なので 640w（約 4KB）になる。
+  DPR 2 なら、それぞれ 640w と 1600w になる。`/products` 1 ページの画像は、計測時の 4.2MB に対して数十 KB になる見込みで、Next 版（33KB）と同じ桁になる。
+- **詰まった点**: 大きな詰まりは無かった。一番の発見は「`asset!` はリテラル専用ではない」こと。#6 で書いた
+  「500 枚なら build.rs しかない」も、規則性があるファイル名なら `macro_rules!` で済む。
+  逆に、`srcset` のための URL 解決が `view!` の外に出ることは、`asset!` の設計（URL は描画時に `Cx` から解決）から来る小さな段差だった。
+- **所要時間の体感**: 画像スクリプト 5 分、`asset!` の実装を読んでマクロ化 10 分、コンポーネントと呼び出し側 10 分、テスト 10 分、記録 15 分。
+  記録を除けば約 35 分。Next.js 版の画像対応（30 分）とほぼ同じだが、その半分以上は「最適化の部品を自作する」作業だった。

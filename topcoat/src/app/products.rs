@@ -161,8 +161,10 @@ async fn product_results(
             <p class="mt-8 text-slate-500">"No products found."</p>
         } else {
             <div class="mt-4 grid grid-cols-2 gap-6 md:grid-cols-3 lg:grid-cols-4">
-                for product in &page.items {
-                    product_card(product: product)
+                // Only the first card is fetched with high priority: it is
+                // the likely LCP element, the rest stay lazy.
+                for (index, product) in page.items.iter().enumerate() {
+                    product_card(product: product, priority: index == 0)
                 }
             </div>
             pagination(

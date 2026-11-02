@@ -47,6 +47,7 @@ async fn cart_page(cx: &Cx) -> Result<impl View> {
                             product_photo(
                                 product: product,
                                 frame: "h-20 rounded-lg",
+                                sizes: "80px",
                                 eager: true
                             )
                         </div>

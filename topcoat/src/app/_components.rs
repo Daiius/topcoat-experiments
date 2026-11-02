@@ -1,5 +1,6 @@
 use topcoat::{
     Result,
+    asset::asset_config,
     context::Cx,
     view::{PromotedStr, StaticClass, View, class, component, view},
 };
@@ -143,14 +144,24 @@ pub async fn rating_stars(tenths: u32, size: &str) -> Result<impl View> {
     })
 }
 
+/// `sizes` defaults to the product grid's; `priority` marks the likely LCP card.
 #[component]
-pub async fn product_card(product: &Product) -> Result<impl View> {
+pub async fn product_card(
+    product: &Product,
+    #[default(GRID_IMAGE_SIZES)] sizes: &str,
+    #[default] priority: bool,
+) -> Result<impl View> {
     Ok(view! {
         <a
             href=(("/products/", product.id))
             class="group flex flex-col rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:shadow-md"
         >
-            product_photo(product: product, frame: "mb-4 h-32 rounded-lg", eager: false)
+            product_photo(
+                product: product,
+                frame: "mb-4 h-32 rounded-lg",
+                sizes: sizes,
+                priority: priority
+            )
             <p class="text-xs font-medium uppercase tracking-wide text-slate-400">
                 (&product.category)
             </p>
@@ -173,18 +184,49 @@ pub async fn product_card(product: &Product) -> Result<impl View> {
     })
 }
 
-/// A product's image at its original size, scaled down by CSS. `frame` sizes
-/// the box; the image covers it. Falls back to the initials placeholder.
+/// `sizes` for a card in the 2 / 3 / 4 column product grid (72rem container),
+/// as in the Next.js version.
+pub const GRID_IMAGE_SIZES: &str = "(min-width: 1024px) 262px, (min-width: 768px) 33vw, 50vw";
+
+/// `sizes` for a card in the 2 / 4 column related-products grid.
+pub const RELATED_IMAGE_SIZES: &str = "(min-width: 1024px) 262px, (min-width: 768px) 25vw, 50vw";
+
+/// A product's image from pre-resized files: the browser picks one from
+/// `srcset` by `sizes`, which has to describe the box `frame` gives it.
+/// `frame` sizes the box; the image covers it. `priority` marks the likely
+/// LCP image (eager, `fetchpriority="high"`); `eager` only skips lazy loading.
+/// Falls back to the initials placeholder.
 #[component]
-pub async fn product_photo(product: &Product, frame: &str, eager: bool) -> Result<impl View> {
+pub async fn product_photo(
+    cx: &Cx,
+    product: &Product,
+    frame: &str,
+    sizes: &str,
+    #[default] eager: bool,
+    #[default] priority: bool,
+) -> Result<impl View> {
+    // `srcset` lists URLs, so resolve them here rather than in `view!`.
+    let image = product_image(product).map(|image| {
+        let config = asset_config(cx);
+        let srcset = image
+            .widths()
+            .map(|(asset, width)| format!("{} {width}w", config.resolve(asset)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        (image.fallback(), srcset)
+    });
+
     Ok(view! {
-        if let Some(image) = product_image(product) {
+        if let Some((src, srcset)) = image {
             <img
-                src=(image)
+                src=(src)
+                srcset=(srcset)
+                sizes=(sizes)
                 alt=(&product.name)
                 width=(IMAGE_SIZE)
                 height=(IMAGE_SIZE)
-                loading=(if eager { "eager" } else { "lazy" })
+                loading=(if eager || priority { "eager" } else { "lazy" })
+                fetchpriority=(priority.then_some("high"))
                 decoding="async"
                 class=(class!(frame, "w-full bg-slate-100 object-cover"))
             >
