@@ -89,25 +89,32 @@ pub fn product_image(product: &Product) -> Option<Asset> {
     Some(variants[product.id as usize % VARIANTS])
 }
 
-/// Resolves the product images to placeholder URLs, so views that render
-/// them work in tests without a bundle from `topcoat asset bundle`.
+/// Resolves the product images, plus `extra` assets named by file, to
+/// placeholder URLs, so views that render them work in tests without a
+/// bundle from `topcoat asset bundle`.
 #[cfg(test)]
-pub fn test_asset_config() -> topcoat::asset::AssetConfig {
+pub fn test_asset_config(extra: &[(Asset, &str)]) -> topcoat::asset::AssetConfig {
     use topcoat::asset::{AssetConfig, MANIFEST_VERSION, Manifest, ManifestEntry};
 
+    let entry = |asset: &Asset, file: String| ManifestEntry {
+        id: asset.id(),
+        file,
+        hash: String::new(),
+        content_type: String::new(),
+    };
     let assets = IMAGES
         .iter()
         .flat_map(|(slug, variants)| {
             variants
                 .iter()
                 .enumerate()
-                .map(move |(index, asset)| ManifestEntry {
-                    id: asset.id(),
-                    file: format!("{slug}-{}.jpg", index + 1),
-                    hash: String::new(),
-                    content_type: "image/jpeg".to_owned(),
-                })
+                .map(move |(index, asset)| entry(asset, format!("{slug}-{}.jpg", index + 1)))
         })
+        .chain(
+            extra
+                .iter()
+                .map(|(asset, file)| entry(asset, (*file).to_owned())),
+        )
         .collect();
     AssetConfig::hosted_at(
         "https://assets.test",
@@ -160,7 +167,7 @@ mod tests {
     #[test]
     fn products_pick_a_variant_by_id() {
         let catalog = Catalog::load();
-        let config = test_asset_config();
+        let config = test_asset_config(&[]);
         let product = catalog.get(1).unwrap();
         let url = config.resolve(product_image(product).unwrap());
         let expected = format!("{}-{}.jpg", product.category_slug, 1 % VARIANTS + 1);

@@ -1,4 +1,5 @@
 mod app;
+mod cart;
 mod catalog;
 mod images;
 mod remote;

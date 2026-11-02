@@ -212,7 +212,7 @@ mod tests {
     async fn fetch(path: &str) -> String {
         let router = Router::builder()
             .app_context(Catalog::load())
-            .assets(test_asset_config())
+            .assets(test_asset_config(&[]))
             .page(headphones)
             .page(nothing)
             .build();

@@ -188,3 +188,46 @@
   件数表示、0 件の文言、チップのリンクに `q` が載ることを確かめた。再描画の POST（`ShardRequest` の JSON と identity ヘッダ）は
   内部プロトコルなので、単体テストでは叩いていない。
 - **所要時間の体感**: 実装 20 分、fmt 起因のエラーの切り分け 10 分。
+
+## 2026-11-03 #4 カートを署名付き cookie + フォーム POST で実装する
+
+- **書こうとしたこと**: 詳細の「Add to cart」、`/cart` での数量変更・削除、ヘッダーの件数表示（ハードコードの "Cart (3)" を置き換える）。
+  状態は cookie に置き、サーバーのメモリには置かない。
+- **`#[procedure]` ではなく、フォーム POST + 303 redirect を選んだ理由**
+  - docs のミューテーションの例は、どれも `<form method="post" action=(href!(…))>` + `#[route(POST)]` + `see_other(…)` の形だった
+    （`docs/router.md` の "Linking to pages and routes"、`docs/router/href.md`、`docs/router/error.md`）。
+    `docs/runtime/link.md` も「ミューテーションはフォーム送信か procedure に置け」と書いており、両方とも正規の手段ではある。
+  - procedure は「ブラウザの式から呼ぶ RPC」で、戻り値をシグナルに入れて**クライアント側で**画面を直す前提の作りになっている
+    （`examples/runtime/src/procedure.rs`）。カートは、ヘッダーの件数とカートページの両方が同じ cookie から描かれるサーバー状態だ。
+    procedure にすると、件数表示もシグナル化して二重管理になる。
+  - フォーム POST なら、JS 無しで動き、cookie はハンドラ内で書けて、PRG によりリロードでの再送も防げる。
+    件数はレイアウトが毎リクエスト cookie から描くので、同期の問題が起きない。
+  - 結論として、**「サーバー状態の変更はフォーム、ブラウザ内で完結する操作は signal、ブラウザから値を取りに行く操作は procedure」**
+    という使い分けが docs の流儀に沿うと判断した。
+- **書き味**
+  - cookie 側は docs の "A helper per store" をそのまま使った。`cookie_store(signed_cookies(cx)…, "cart").parse_or_default()` を
+    `cart(cx)` に包み、各ハンドラは `cart(cx).update(|c| …).commit()?` と書くだけ。
+    改ざん・欠落・旧形式は `parse_or_default` で空カートに倒れる。
+  - 値は `[[id,qty],…]` の JSON（`#[serde(transparent)] struct Cart(Vec<(u32, u32)>)`）。上限は 50 行・各 99 個にした。
+    cookie の 4KB 制限から十分離している。
+  - 鍵は `COOKIE_KEY`（128 桁の hex = 64 バイト）から読む。未設定なら `Key::generate()` に倒して警告を出す。
+    docs の例は `Key::generate()` を起動時に呼ぶだけで、「複数インスタンスでは同じ鍵を読み込め」と注記がある。
+    stateless・マルチインスタンス前提では環境変数が必須になる。
+  - `Form<T>` 抽出（`async fn add(cx: &Cx, Form(input): Form<AddForm>)`）と、`see_other(href!(super::cart_page).resolve(cx))` は素直に書けた。
+    module ルーティングで `src/app/cart/add.rs` → `/cart/add` になる。
+    詳細ページから `href!(crate::app::cart::add::add)` で参照するために、`mod add` を `pub(crate)` にする必要があった。
+- **#541（フォーム送信で文書全体を再読込）**: **仕様上そのまま踏む**。runtime の `RuntimeLayer` はフォーム送信を素通しする
+  （`topcoat-runtime/src/layer.rs` に "Other requests pass through unchanged, including form submissions"）。
+  POST → 303 → GET で文書全体が描き直される。スクロール位置は失われ、ヘッダー・フッターも再取得される。
+  Next.js の Server Action（RSC payload で差分更新）との比較点になる。
+- **CSRF**: router 既定の `OriginPolicy` が、信頼しない Origin からの状態変更リクエストを拒否する（`topcoat-router/src/origin.rs`）。
+  cookie は `SameSite=Lax`、`HttpOnly`、`Secure`、`Path=/`。
+  ⚠ Vercel のプロキシ越しで Origin と Host の判定が一致するか（403 にならないか）は、デプロイ時に要確認。
+  不一致なら `trusted_proxies` / `origin_policy` の設定が要る。
+- **キャッシュへの影響**: ヘッダーの件数がレイアウトで cookie を読むので、**全ページがリクエストごとの描画**になる
+  （topcoat はもともと全ページ動的なので、追加のコストではない）。Next.js 側では、これが静的シェルを崩す要因になりうる。
+- **テスト**: `router()` を `build(assets, key)` に分けた。`test_asset_config` で Tailwind CSS と runtime の JS も解決できるようにし、
+  **本物の `module_router!()` をテストで回せる**ようにした（#2 のときは layout の asset で詰まっていた）。
+  追加 → 追加 → 数量変更 → 削除を cookie を受け渡しながら通すテスト、改ざんした cookie が空カートになるテスト、
+  存在しない商品が 404 になるテストを足した。
+- **所要時間の体感**: 実装 25 分、end-to-end テストの土台作り 15 分。

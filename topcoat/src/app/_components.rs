@@ -1,9 +1,11 @@
 use topcoat::{
     Result,
+    context::Cx,
     view::{PromotedStr, StaticClass, View, class, component, view},
 };
 
 use crate::{
+    cart::cart,
     catalog::{Product, Review, Spec, filled_stars, format_rating},
     images::{IMAGE_SIZE, product_image},
     urls::products_url,
@@ -60,7 +62,10 @@ const FOOTER_COLUMNS: [(&str, [(&str, &str); 4]); 4] = [
 ];
 
 #[component]
-pub async fn site_nav() -> Result<impl View> {
+pub async fn site_nav(cx: &Cx) -> Result<impl View> {
+    // Read on every request: the count comes from the visitor's cookie.
+    let count = cart(cx).read().count();
+
     Ok(view! {
         <header class="border-b border-slate-200 bg-white">
             <nav
@@ -72,11 +77,14 @@ pub async fn site_nav() -> Result<impl View> {
                 <div class="flex items-center gap-6 text-sm font-medium text-slate-600">
                     <a href="/" class="hover:text-slate-900">"Home"</a>
                     <a href="/products" class="hover:text-slate-900">"Products"</a>
-                    <span
-                        class="rounded-full bg-indigo-600 px-3 py-1 text-xs font-semibold text-white"
+                    <a
+                        href="/cart"
+                        class="rounded-full bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-500"
                     >
-                        "Cart (3)"
-                    </span>
+                        "Cart ("
+                        (count)
+                        ")"
+                    </a>
                 </div>
             </nav>
         </header>

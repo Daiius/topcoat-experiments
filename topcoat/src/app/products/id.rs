@@ -1,7 +1,7 @@
 use topcoat::{
     Result,
     context::{Cx, app_context},
-    router::{error::RouterErrorExt, module_param, page, path_param},
+    router::{error::RouterErrorExt, href, module_param, page, path_param},
     view::{View, component, suspense, view},
 };
 
@@ -10,6 +10,7 @@ use crate::{
         breadcrumbs, product_card, product_card_skeleton, product_photo, rating_stars, review_list,
         review_list_skeleton, spec_table,
     },
+    cart::MAX_QUANTITY,
     catalog::{Catalog, format_rating},
     remote::{fetch_related, fetch_reviews},
 };
@@ -56,12 +57,31 @@ async fn product_detail(cx: &Cx) -> Result<impl View> {
                         <p>(paragraph)</p>
                     }
                 </div>
-                <button
-                    type="button"
-                    class="mt-8 inline-block rounded-lg bg-indigo-600 px-8 py-3 text-sm font-semibold text-white"
+                // A plain form POST: the handler updates the signed cart
+                // cookie and redirects to the cart page.
+                <form
+                    method="post"
+                    action=(href!(crate::app::cart::add::add))
+                    class="mt-8 flex items-center gap-3"
                 >
-                    "Add to cart"
-                </button>
+                    <input type="hidden" name="product_id" value=(product.id)>
+                    <label class="sr-only" for="quantity">"Quantity"</label>
+                    <input
+                        id="quantity"
+                        type="number"
+                        name="quantity"
+                        min="1"
+                        max=(MAX_QUANTITY)
+                        value="1"
+                        class="w-20 rounded-lg border border-slate-300 px-3 py-3 text-sm"
+                    >
+                    <button
+                        type="submit"
+                        class="inline-block rounded-lg bg-indigo-600 px-8 py-3 text-sm font-semibold text-white hover:bg-indigo-500"
+                    >
+                        "Add to cart"
+                    </button>
+                </form>
             </div>
         </div>
         <section class="mt-16">
@@ -152,7 +172,7 @@ mod tests {
     async fn sections_stream_in_after_their_fallbacks() {
         let router = Router::builder()
             .app_context(Catalog::load())
-            .assets(test_asset_config())
+            .assets(test_asset_config(&[]))
             .page(boundaries)
             .build();
         let request = Request::builder()
