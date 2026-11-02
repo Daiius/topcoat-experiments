@@ -276,6 +276,90 @@ mod tests {
         );
     }
 
+    /// Pulls every `data-topcoat-on:*` / `data-topcoat-bind:*` attribute out
+    /// of `html` as `(name, decoded JavaScript source)`.
+    fn runtime_expressions(html: &str) -> Vec<(String, String)> {
+        let mut found = Vec::new();
+        let mut rest = html;
+        while let Some(start) = rest.find(" data-topcoat-") {
+            rest = &rest[start + 1..];
+            let Some(eq) = rest.find("=\"") else { break };
+            let name = &rest[..eq];
+            let value_start = eq + 2;
+            let Some(len) = rest[value_start..].find('"') else {
+                break;
+            };
+            let value = &rest[value_start..value_start + len];
+            if name.starts_with("data-topcoat-on:") || name.starts_with("data-topcoat-bind:") {
+                let source = value
+                    .replace("&quot;", "\"")
+                    .replace("&#39;", "'")
+                    .replace("&lt;", "<")
+                    .replace("&gt;", ">")
+                    .replace("&amp;", "&");
+                found.push((name.to_owned(), source));
+            }
+            rest = &rest[value_start + len..];
+        }
+        found
+    }
+
+    /// The browser compiles each runtime expression with
+    /// `new Function("cx", "return " + source + ";")` (`expression/compile.ts`
+    /// in the runtime). Rust type-checks the expression but never parses the
+    /// JavaScript it lowers to, so a syntax error there only shows up in the
+    /// browser. This runs the same wrapper through `node --check`.
+    fn assert_compiles_as_javascript(page: &str, expressions: &[(String, String)]) {
+        use std::{io::Write, process::Command};
+
+        let Ok(version) = Command::new("node").arg("--version").output() else {
+            eprintln!("skipping the JavaScript syntax check: node is not installed");
+            return;
+        };
+        assert!(version.status.success());
+
+        let dir = std::env::temp_dir().join(format!("topcoat-js-check-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for (index, (name, source)) in expressions.iter().enumerate() {
+            let path = dir.join(format!(
+                "{}-{index}.js",
+                page.trim_matches('/').replace('/', "_")
+            ));
+            let mut file = std::fs::File::create(&path).unwrap();
+            writeln!(file, "(function (cx) {{ return {source}; }});").unwrap();
+            drop(file);
+            let output = Command::new("node")
+                .arg("--check")
+                .arg(&path)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{page}: {name} is not valid JavaScript:\n{source}\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn runtime_expressions_compile_as_javascript() {
+        let router = test_router();
+        for page in ["/products", "/products?q=lamp", "/products/1", "/cart", "/"] {
+            let html = get(&router, page, None).await;
+            let expressions = runtime_expressions(&html);
+            if page.starts_with("/products") && !page.starts_with("/products/") {
+                assert!(
+                    expressions
+                        .iter()
+                        .any(|(name, _)| name == "data-topcoat-on:input"),
+                    "{page}: the search handler is missing: {expressions:?}"
+                );
+            }
+            assert_compiles_as_javascript(page, &expressions);
+        }
+    }
+
     #[tokio::test]
     async fn the_products_page_renders_the_search_shard_and_runtime() {
         let router = test_router();

@@ -268,3 +268,40 @@
        docs は「無期限の待ちは接続チェックの後ろに置け」としており、流儀からは外れる。
     2. `sse` feature + 自前の route で、JSON を polling / SSE する。
 - **所要時間の体感**: 実装 15 分、transport の読み込み 15 分。
+
+## 2026-11-03 #3 検索の `@input` が、ブラウザで初めてコンパイルエラーになった
+
+- **何が起きたか**: 第 2 弾の時点で、`cargo check`、clippy、unit test、shard の初期描画を含む end-to-end テストはすべて通っていた。
+  ところが supervisor がブラウザで開くと、`Error: Failed to compile event @input`（runtime JS の `compile`）が出た。
+  入力しても shard への POST が出ず、URL も変わらない。**Rust の型検査も unit test も通ったのに、生成された JS が不正で、実行時に初めて分かった。**
+- **原因**
+  - `$(|e: Event| { …; raw!("{ const url = …; history.replaceState(…); }", ()) })` のように、closure の**末尾式**に `raw!` を置いていた。
+    中身は「文の並び」のつもりで `{ … }` と書いた JS だった。
+  - runtime 式は JS に下ろされ、末尾式は `return <式>;` になる。ブラウザは各属性値を
+    `new Function("cx", "return " + source + ";")`（`browser/src/expression/compile.ts`）でコンパイルする。
+    その結果 `return { const url = … }` という形になり、`{` がオブジェクトリテラルとして解釈されて `SyntaxError: Unexpected identifier 'url'` になった。
+  - `raw!` の JS 部分は、`${ident}` の置換以外は**文字列のまま連結されるだけ**（`topcoat-runtime-grammar/src/expr/builtin_macro.rs` の `interpolate_js`）。
+    マクロも rustc も JS の構文を一切見ない。docs（`docs/runtime/expr.md` "Embedding JavaScript"）の例は `raw!("${n}.toUpperCase()", …)` という**式**だが、
+    「JS は式でなければならない」とは明記されていない。
+- **もう 1 つの潜在バグ**: `${value}` に入るのは JS の文字列ではなく、**runtime のサロゲート（`Str` クラス）**だった。
+  - 旧コードの `${value}.trim()` はサロゲートの `trim()` を呼び、サロゲートを返す。そのため `if (q)` は空文字でも常に真になり、空入力で `?q=` が残る。
+  - `Str` は `toString()` を持つので、`'' + ${value}` で生の文字列になる。
+  - 一方、Rust 側の `value.to_owned()` は JS でも `__local1.to_owned()` のまま出力される。これはサロゲートのメソッド（`Str.to_owned()`）として正しく動く。
+- **直し方**: JS を **1 つの式（即時実行のアロー関数）** にした。
+
+  ```
+  ((url, q) => { …; history.replaceState(history.state, '', url); })(new URL(location.href), ('' + ${value}).trim())
+  ```
+
+  `raw!("…", ())` の `()` は、前回の `topcoat fmt` の末尾 `,` 問題の回避として残した（イベントハンドラ内はサーバーでは実行されない）。
+- **再発防止のテスト**（`app.rs` の `runtime_expressions_compile_as_javascript`）
+  - 本物の router で `/products`、`/products?q=lamp`、`/products/1`、`/cart`、`/` を描画する。
+  - `data-topcoat-on:*` / `data-topcoat-bind:*` の属性値を取り出して実体参照を戻し、`(function (cx) { return <source>; });` に包んで `node --check` にかける。
+  - 修正前のコードで**このテストが同じ `SyntaxError` で落ちる**ことを確認してから直した。node が無い環境では skip する。ポートは使わない。
+  - 構文だけでなく動作も、手元で一度確かめた: 実際に出力されたハンドラの JS を node で `new Function` し、サロゲートと `history` のスタブを渡す。
+    `"  lamp "` → `?sort=price&q=lamp`（`page` は消える）、`""` → `q` が消える。こちらはテストには入れていない
+    （runtime 本体のサロゲートを読み込めず、スタブの正しさに依存するため）。
+- **記事向けの論点**: 「Rust で書けば型で守られる」という期待は、`$()` の中では**サーバー側の評価**にしか効かない。
+  JS への下ろしは別経路で、特に `raw!` は無検査で素通しされる。Next.js の Client Component なら tsc とバンドラが同じ箇所を検査する。
+  topcoat では、ブラウザ（または自前の node 検査）まで行かないと分からない。
+- **所要時間の体感**: 原因の特定 15 分、テスト作り 15 分。

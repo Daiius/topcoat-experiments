@@ -77,9 +77,12 @@ async fn products(cx: &Cx) -> Result<impl View> {
                         search.set(value.to_owned());
                         // Keep the address bar in step so reloads and shared
                         // links show the same results. Drops `page`, since a
-                        // new query starts at the first page.
+                        // new query starts at the first page. The JavaScript
+                        // must be an expression: the runtime lowers it to
+                        // `return <js>;`. `${value}` is a runtime surrogate,
+                        // not a JS string; `'' + …` converts it.
                         raw!(
-                            "{ const url = new URL(location.href); const q = ${value}.trim(); if (q) url.searchParams.set('q', q); else url.searchParams.delete('q'); url.searchParams.delete('page'); history.replaceState(history.state, '', url); }",
+                            "((url, q) => { if (q) url.searchParams.set('q', q); else url.searchParams.delete('q'); url.searchParams.delete('page'); history.replaceState(history.state, '', url); })(new URL(location.href), ('' + ${value}).trim())",
                             (),
                         )
                     })
