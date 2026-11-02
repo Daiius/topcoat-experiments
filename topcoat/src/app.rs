@@ -228,6 +228,34 @@ mod tests {
         assert!(!html.contains(&first), "{html}");
     }
 
+    /// Every cart row gets its product's image, loaded eagerly.
+    #[tokio::test]
+    async fn cart_rows_show_their_thumbnails_eagerly() {
+        let router = test_router();
+        let (_, cookie) = post(&router, "/cart/add", "product_id=1", None).await;
+        let (_, cookie) = post(&router, "/cart/add", "product_id=42", cookie.as_deref()).await;
+        let html = get(&router, "/cart", cookie.as_deref()).await;
+        let catalog = Catalog::load();
+        for id in [1, 42] {
+            let product = catalog.get(id).unwrap();
+            let file = format!(
+                "https://assets.test/{}-{}.jpg",
+                product.category_slug,
+                id as usize % crate::images::VARIANTS + 1
+            );
+            let tag = format!("<img src=\"{file}\" alt=\"{}\"", product.name);
+            let at = html
+                .find(&tag)
+                .unwrap_or_else(|| panic!("{tag} missing from {html}"));
+            let end = at + html[at..].find('>').unwrap();
+            assert!(
+                html[at..end].contains("loading=\"eager\""),
+                "{}",
+                &html[at..end]
+            );
+        }
+    }
+
     #[tokio::test]
     async fn a_tampered_cookie_reads_as_an_empty_cart() {
         let router = test_router();

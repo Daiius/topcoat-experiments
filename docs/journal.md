@@ -305,3 +305,18 @@
   JS への下ろしは別経路で、特に `raw!` は無検査で素通しされる。Next.js の Client Component なら tsc とバンドラが同じ箇所を検査する。
   topcoat では、ブラウザ（または自前の node 検査）まで行かないと分からない。
 - **所要時間の体感**: 原因の特定 15 分、テスト作り 15 分。
+
+## 2026-11-03 #4 #6 カート 2 行目のサムネイルが、load 直後のスクショで空だった
+
+- **報告**: `/cart` の 2 行目（Harbor Ultrawide Display Max、id 42）の画像が、load 直後のスクショでは空だった。
+- **コードで切り分けた結果: 割り当ても bundle も問題なし。lazy 読み込みのタイミングと判断した。**
+  - 割り当て: id 42 は `displays` カテゴリで、`42 % 3 + 1 = 1` から `data/images/displays-1.jpg`（292,223 B）になる。
+    ファイルは存在し、`images.rs` の表にも載っている。
+  - bundle: `Asset` が bundle に無ければ、描画時に `failed to resolve asset … in the asset catalog` で **panic する**
+    （`topcoat-asset/src/config.rs` の `fmt_url`）。ページが 200 で描けているなら、URL は bundle から解決できている。
+  - 原因の見立て: カートのサムネイルが `loading="lazy"` だった。lazy 画像は `load` イベントを待たせない。
+    80px の枠に 1600px・約 290KB の原寸を 2 枚読むので、`load` 時点のスクショでは間に合わないことがある
+    （「最適化が無いことの実害」の一例でもある）。
+- **対応**: カートの行は短く、すべてファーストビューに入るので、`eager: true`（`loading="eager"`）にした。
+  テストも足した。カートに id 1 と 42 を入れて `/cart` を描画し、両方の `<img>` が期待どおりのファイル名と `loading="eager"` で出ることを確かめる。
+- **所要時間の体感**: 10 分。

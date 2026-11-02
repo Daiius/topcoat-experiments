@@ -41,11 +41,13 @@ async fn cart_page(cx: &Cx) -> Result<impl View> {
             >
                 for (product, quantity) in &items {
                     <li class="flex flex-wrap items-center gap-4 p-4">
+                        // Eager: a cart is short and every row is above the
+                        // fold, so lazy loading only delays the thumbnails.
                         <div class="w-20 shrink-0">
                             product_photo(
                                 product: product,
                                 frame: "h-20 rounded-lg",
-                                eager: false
+                                eager: true
                             )
                         </div>
                         <div class="min-w-0 flex-1">
