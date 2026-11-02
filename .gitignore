@@ -7,3 +7,5 @@ node_modules/
 # Claude worktrees
 .claude/worktrees/
 .env*
+# Playwright MCP
+.playwright-mcp/
