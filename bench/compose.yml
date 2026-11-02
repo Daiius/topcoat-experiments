@@ -1,0 +1,45 @@
+# Local side-by-side measurement of the two storefronts. See bench/README.md.
+#
+#   export COOKIE_KEY="$(openssl rand -hex 64)"
+#   docker compose -f bench/compose.yml build
+#   docker compose -f bench/compose.yml up -d
+#   bench/run.sh all
+#
+# Both services get the same limits, matching Vercel Hobby (1 vCPU, 2 GB).
+# Both listen on 8080 inside the container (the topcoat image defaults to
+# PORT=80 for Vercel; it is overridden here so the two are configured alike).
+# Ports bind to 127.0.0.1 only.
+
+name: storefront-bench
+
+x-limits: &limits
+  cpus: 1
+  mem_limit: 2g
+  memswap_limit: 2g
+  restart: "no"
+
+services:
+  topcoat:
+    <<: *limits
+    image: storefront-topcoat:bench
+    container_name: bench-topcoat
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    environment:
+      PORT: "8080"
+      COOKIE_KEY: ${COOKIE_KEY:?set COOKIE_KEY, e.g. export COOKIE_KEY="$(openssl rand -hex 64)"}
+    ports:
+      - "127.0.0.1:8081:8080"
+
+  nextjs:
+    <<: *limits
+    image: storefront-nextjs:bench
+    container_name: bench-nextjs
+    build:
+      context: ..
+      dockerfile: nextjs/Dockerfile
+    environment:
+      PORT: "8080"
+    ports:
+      - "127.0.0.1:8082:8080"

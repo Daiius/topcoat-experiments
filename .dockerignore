@@ -1,0 +1,26 @@
+# Shared by both builds (context = repository root):
+#   docker build .                        -> Dockerfile (topcoat, also Vercel)
+#   docker build -f nextjs/Dockerfile .   -> Next.js
+# Each Dockerfile COPYs only the paths it needs; this file keeps the context
+# small and keeps host build output and secrets out of it.
+
+.git
+.claude
+.playwright-mcp
+.vercel
+.env*
+**/.DS_Store
+
+# Build output and dependencies (regenerated in the builder)
+**/target
+**/node_modules
+**/.next
+topcoat/assets
+nextjs/public/images
+nextjs/src/generated
+
+# Not used by either image
+bench
+docs
+scripts
+**/*.md
