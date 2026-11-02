@@ -5,6 +5,7 @@ use topcoat::{
 
 use crate::{
     catalog::{Product, Review, Spec, filled_stars, format_rating},
+    images::{IMAGE_SIZE, product_image},
     urls::products_url,
 };
 
@@ -141,11 +142,7 @@ pub async fn product_card(product: &Product) -> Result<impl View> {
             href=(("/products/", product.id))
             class="group flex flex-col rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:shadow-md"
         >
-            <div
-                class="mb-4 flex h-32 items-center justify-center rounded-lg bg-slate-100 text-3xl font-bold text-slate-300"
-            >
-                (product.initials())
-            </div>
+            product_photo(product: product, frame: "mb-4 h-32 rounded-lg", eager: false)
             <p class="text-xs font-medium uppercase tracking-wide text-slate-400">
                 (&product.category)
             </p>
@@ -165,6 +162,34 @@ pub async fn product_card(product: &Product) -> Result<impl View> {
             </div>
             <p class="mt-3 text-lg font-bold">(product.price())</p>
         </a>
+    })
+}
+
+/// A product's image at its original size, scaled down by CSS. `frame` sizes
+/// the box; the image covers it. Falls back to the initials placeholder.
+#[component]
+pub async fn product_photo(product: &Product, frame: &str, eager: bool) -> Result<impl View> {
+    Ok(view! {
+        if let Some(image) = product_image(product) {
+            <img
+                src=(image)
+                alt=(&product.name)
+                width=(IMAGE_SIZE)
+                height=(IMAGE_SIZE)
+                loading=(if eager { "eager" } else { "lazy" })
+                decoding="async"
+                class=(class!(frame, "w-full bg-slate-100 object-cover"))
+            >
+        } else {
+            <div
+                class=(class!(
+                    frame,
+                    "flex items-center justify-center bg-slate-100 text-3xl font-bold text-slate-300",
+                ))
+            >
+                (product.initials())
+            </div>
+        }
     })
 }
 

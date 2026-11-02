@@ -7,7 +7,7 @@ use topcoat::{
 
 use crate::{
     app::_components::{
-        breadcrumbs, product_card, product_card_skeleton, rating_stars, review_list,
+        breadcrumbs, product_card, product_card_skeleton, product_photo, rating_stars, review_list,
         review_list_skeleton, spec_table,
     },
     catalog::{Catalog, format_rating},
@@ -30,11 +30,12 @@ async fn product_detail(cx: &Cx) -> Result<impl View> {
             name: &product.name
         )
         <div class="mt-6 grid gap-10 lg:grid-cols-2">
-            <div
-                class="flex min-h-80 items-center justify-center rounded-2xl bg-slate-100 text-7xl font-bold text-slate-300"
-            >
-                (product.initials())
-            </div>
+            // The likely LCP element: load it eagerly.
+            product_photo(
+                product: product,
+                frame: "aspect-square rounded-2xl",
+                eager: true
+            )
             <div>
                 <p class="text-sm font-medium uppercase tracking-wide text-slate-400">
                     (&product.category)
@@ -122,10 +123,13 @@ async fn related_grid_skeleton(count: usize) -> Result<impl View> {
 #[cfg(test)]
 mod tests {
     use tokio::time::Instant;
-    use topcoat::router::{Body, Router, request::Request, to_bytes};
+    use topcoat::{
+        asset::RouterBuilderAssetExt,
+        router::{Body, Router, request::Request, to_bytes},
+    };
 
     use super::*;
-    use crate::remote::RELATED_DELAY;
+    use crate::{images::test_asset_config, remote::RELATED_DELAY};
 
     // Module-derived pages cannot be registered by hand, and the real layout
     // needs the asset bundle, so this page mounts the same two boundaries
@@ -148,6 +152,7 @@ mod tests {
     async fn sections_stream_in_after_their_fallbacks() {
         let router = Router::builder()
             .app_context(Catalog::load())
+            .assets(test_asset_config())
             .page(boundaries)
             .build();
         let request = Request::builder()

@@ -99,3 +99,38 @@
 - rust-analyzer は rustup の proxy だけが入っていて、コンポーネント本体は未インストールだった
   （`Unknown binary 'rust-analyzer' in official toolchain`）。そのため、マクロ内での効き方（#486）は今回検証できていない。
   clippy も未インストールだった（`'cargo-clippy' is not installed`）。
+
+## 2026-11-03 #6 商品画像を `asset!` で配信する
+
+- **書こうとしたこと**: `scripts/gen_images.py`（PIL）で合成した画像を商品に割り当てる。
+  一覧カード、詳細、関連商品の頭文字プレースホルダを置き換える。
+- **素材**: 8 カテゴリ × 3 枚 = 24 枚。1600×1600 の JPEG（quality 88）で、1 枚あたり約 280〜300KB、合計 6.7MB。
+  割り当て規則は `data/images/{category_slug}-{(id % 3) + 1}.jpg` で、Next.js 版も同じ規則を使う。
+  生成は決定的にした（同じスクリプトから同じバイト列が出る）。
+  `Image.effect_noise` は C 側の乱数を使い、実行のたびに出力が変わる。そのため、シード付きの `random.Random.randbytes` でノイズを作った。
+- **500 商品 → 静的アセットの対応づけ**
+  - `asset!` の引数は**文字列リテラルだけ**。`format!` や `concat!` で組み立てたパスは渡せない。
+    コンパイル時に ID を計算し、バイナリに宣言を埋め込んで bundler が拾う仕組みだからだ。
+    そのため、動的な id から引くには「全ファイルを 1 回ずつ `asset!` で宣言した const 表」を書き、実行時に添字で引くしかない
+    （`src/images.rs` の `IMAGES: [(&str, [Asset; 3]); 8]`）。
+  - 24 枚なら手書きで済む。商品ごとに 1 枚（500 枚）だと 500 行の表になり、build.rs で生成するしかなくなる。
+    ただし生成ファイルを `include!` すると、相対パスの基準がどこになるかという問題が出る
+    （`asset!` の `./` `../` は呼び出し元ソースファイル基準）。今回は試していない。
+  - 表と実ファイルのずれはコンパイルでは検出できない（`asset!` はパスの存在を確かめない。確かめるのは bundler）。
+    そこで、`data/images/` の中身と表を突き合わせるテストを足した。
+  - 流儀としては「少数の固定アセット（ロゴ、CSS、フォント）」向けの API で、**データ駆動の画像（CMS やユーザー投稿）は守備範囲外**という感触。
+    その種の画像は外部ストレージの URL をそのまま `<img src>` に入れることになる。
+- **最適化が無いことの実害**
+  - `asset!` の options は `rename` / `extension` / `checksum` / `content_type` の 4 つだけで、リサイズや形式変換は無い。
+    `srcset` に並べる縮小版も作れない。h-32（128px）のカードにも 1600px の原寸（約 290KB）が届く。
+    一覧の 1 ページ（24 枚）で、画像だけで最大約 7MB になる。
+  - `width` / `height` / `loading="lazy"` / `decoding="async"` は普通の HTML 属性としてそのまま書ける。
+    レイアウトシフト対策と遅延読み込みはできる。詳細の主画像（LCP 候補）だけ `loading="eager"` にした。
+    縮小版を自前で用意すれば（スクリプトで複数サイズを生成し、それぞれ `asset!` で宣言）`srcset` も手で書ける。ただし宣言の数が倍々に増える。
+  - 配信は `Cache-Control: public, max-age=31536000, immutable`（`topcoat-asset/src/serve.rs`）。
+    ファイル名に内容ハッシュが入るので、2 回目以降のアクセスはキャッシュが効く。
+- **テストで踏んだこと**: 関連商品カードが画像を描画するようになったため、#2 の suspense テストが
+  `no asset config registered in this router context` で panic した。
+  bundle が無い環境でも、`Manifest` を手で組み立てて `AssetConfig::hosted_at("https://assets.test", manifest)` を登録すれば
+  描画できる（`Asset::id()` が公開されている）。この test helper を `images.rs` に置いた。
+- **所要時間の体感**: 画像スクリプト 15 分、topcoat 側 15 分、テストの asset 回避 10 分。

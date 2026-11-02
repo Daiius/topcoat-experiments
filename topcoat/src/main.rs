@@ -1,5 +1,6 @@
 mod app;
 mod catalog;
+mod images;
 mod remote;
 mod urls;
 
