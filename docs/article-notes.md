@@ -113,3 +113,33 @@ load generator は同一ホスト。Next.js は `next start` 相当の standalon
 - **Next の強みは「キャッシュして待たない」設計を API が後押しすること**（`'use cache'`）。topcoat は待つしかなく、遅い依存がそのまま並列度を食う
 - **フロントエンド配信物は Next が重い（JS 12 倍）が、画像は Next が圧倒的に軽い**。topcoat で同等にするには事前リサイズ + `srcset` を自作
 - `/products?q=` の topcoat p99 42ms は他より揺れが大きい（max モード）。要再計測
+
+## 8. ブラウザ体感（Playwright + CDP、docker コンテナ、キャッシュ無効、1280×900）
+
+**回線制限なし**（中央値 3 回, ms）
+
+| app | route | TTFB | FCP | LCP | 転送合計 | JS | 画像 |
+|---|---|---|---|---|---|---|---|
+| topcoat | `/` | 2 | 36 | 96 | 1724KB | 16KB | 1701KB |
+| topcoat | `/products` | 3 | 40 | 60 | 4258KB | 16KB | 4234KB |
+| topcoat | `/products/1` | 2 | 24 | 24 | 315KB | 16KB | 291KB |
+| nextjs | `/` | 5 | 44 | 60 | 191KB | 150KB | 16KB |
+| nextjs | `/products` | 3 | 48 | 360 | 228KB | 150KB | 38KB |
+| nextjs | `/products/1` | 3 | 36 | 340 | 200KB | 156KB | 6KB |
+
+**Slow 4G 相当（150ms RTT, 1.6Mbps）+ CPU 4x スロットル**（networkidle まで待機, ms）
+
+| app | route | FCP | LCP（要素） | networkidle | 転送合計 | JS | 画像 |
+|---|---|---|---|---|---|---|---|
+| topcoat | `/` | **380** | 8680 (IMG) | 9343 | 1724KB | 16KB | 1701KB |
+| topcoat | `/products` | **384** | **8648** (IMG) | 21751 | 4258KB | 16KB | 4234KB |
+| topcoat | `/products/1` | 388 | 1844 (IMG) | 2338 | 315KB | 16KB | 291KB |
+| nextjs | `/` | 460 | 720 (IMG) | 2265 | 191KB | 150KB | 16KB |
+| nextjs | `/products` | 460 | **796** (IMG) | 2400 | 228KB | 150KB | 38KB |
+| nextjs | `/products/1` | 464 | 464 (IMG) | 2209 | 199KB | 156KB | 6KB |
+
+所見:
+- **FCP は topcoat が速い**（JS 16KB vs 150KB、低速 CPU ほど効く）。HTML だけで描画が完結する設計の強み
+- **LCP は画像最適化の有無で決まる**。topcoat は原寸配信のため Slow 4G で 8.6 秒。フレームワークの差というより
+  「最適化を標準で持つか」の差 → topcoat で手書きするとどれだけの手間で追いつけるかを実験（下記 9）
+- Next の LCP 340〜360ms（回線制限なし）は画像最適化 API の初回変換待ちを含む可能性（キャッシュ無効で毎回 `/_next/image`）
