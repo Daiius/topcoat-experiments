@@ -31,6 +31,11 @@
 - Next.js 側は公式ベンチの `force-dynamic` を使わず、**推奨構成**（静的シェル + `use cache`/ISR、
   `<Suspense>`、必要な所だけ Client Component、`next/image`）で書く
 
+- 商品画像は **Python PIL の生成スクリプト（`scripts/gen_images.py`）で合成した画像**を使う
+  （外部素材はライセンス確認が要るので使わない）。最適化の差が出るよう **大きめの原寸**（例: 1600×1600 JPEG）で
+  少数（例: カテゴリごとに数枚、計 20〜30 枚）を作り、商品 id から決定的に割り当てる。生成物は `data/images/` にコミットし、両版で共有する
+- ローカル運用（GitHub リモートなし・PR/bot レビューなし）。受け入れ後に supervisor が main へ merge する
+
 ## 機能一覧（両版で揃える）
 
 | # | 機能 | topcoat | Next.js |
@@ -45,7 +50,6 @@
 ## 未決事項（既決として実装しないこと）
 
 - Vercel コンテナ上で SSE の長時間接続が使えるか（関数最大実行時間 Hobby 300 秒）。駄目なら polling 等に退避し、それ自体を知見として記録する
-- 商品画像の素材（生成画像 / プレースホルダ画像）
 - 計測シナリオの詳細（oha / Lighthouse / playwright の配分）
 
 ## 既知の topcoat の地雷（v0.11.0 時点の open issue）
