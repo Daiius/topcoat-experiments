@@ -16,3 +16,5 @@
 | D9 | 11-03 | ユーザー | ローカル運用（GitHub リモート・PR・bot レビューなし） | 検証用・速度優先 |
 | D10 | 11-03 | 自律 | 画像は PIL で合成生成（`scripts/gen_images.py`）、1600px 程度を少数、id で決定的割当 | 外部素材はライセンス確認が要る。最適化差を出すため原寸大きめ |
 | D11 | 11-03 | 自律 | host toolchain に clippy を追加（`rustup component add clippy`） | 静的チェックに必要 |
+| D12 | 11-03 | 自律 | Vercel への実デプロイは朝以降（アカウント操作が要る）。夜間は Vercel 互換 Dockerfile の準備とローカル docker 計測まで | goal の「ローカルで進められる範囲」。Vercel 調査: CDN に載るのは `s-maxage` 付き応答のみ、SSE は最大実行時間 300s(Hobby) で切れる前提 |
+| D13 | 11-03 | 自律 | Docker は glibc + `gcr.io/distroless/cc-debian12:nonroot`（topcoat）/ `distroless/nodejs*-debian12:nonroot`（Next.js standalone）。依存キャッシュは BuildKit cache mount | cephylas は distroless/cc の素朴な 2 段のみ。Vercel 公式 Rust ガイドも cc-debian12:nonroot。musl は jemalloc と相性が悪い |
