@@ -41,3 +41,4 @@
 | D34 | 11-03 | 自律 | 画像最適化の実験を main に merge（以降の比較・デプロイは最適化版で）。最適化前の数値は計測 1 回目と article-notes §7/§8 に保存 | 記事では前後比較を示す。Vercel デプロイは実運用に近い形で |
 | D35 | 11-03 | 自律 | 「動的な穴を外す」実験は比較用ブランチに留め main は D26 を維持 | HttpOnly・件数の二重管理のトレードオフがあり、記事では両方を示す |
 | D36 | 11-03 | 自律 | `next dev` が自動生成する `nextjs/AGENTS.md` をコミットする | 削除しても再生成され、Next.js 自身がコミットを推奨 |
+| D37 | 11-03 | 自律 | Vercel デプロイ手順（`scripts/deploy-vercel.sh`, `docs/deploy-vercel.md`）を merge。実デプロイはユーザー確認後（CLI はログイン済み daiius だが公開を伴うため夜間は実行しない） | D12。setup 既定: Corepack 有効、Next のビルドコマンド上書き、`--prod` 推奨、プロジェクト名 `topcoat-practice-{topcoat,nextjs}` |
