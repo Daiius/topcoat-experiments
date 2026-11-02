@@ -63,7 +63,12 @@ export async function getProduct(id: number): Promise<Product | null> {
   return byId.get(id) ?? null;
 }
 
-/** Products by ID, skipping unknown ones. Not cached: callers are cached. */
+/** Whether `id` names a product. A plain map lookup, for validating input. */
+export function isProductId(id: unknown): id is number {
+  return typeof id === "number" && byId.has(id);
+}
+
+/** Products by ID, skipping unknown ones. A plain map lookup, not cached. */
 export function lookupProducts(ids: number[]): Product[] {
   return ids.map((id) => byId.get(id)).filter((product) => product !== undefined);
 }

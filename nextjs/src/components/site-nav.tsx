@@ -1,4 +1,7 @@
 import Link from "next/link";
+import { Suspense } from "react";
+
+import { countItems, readCart } from "@/lib/cart";
 
 export function SiteNav() {
   return (
@@ -14,11 +17,29 @@ export function SiteNav() {
           <Link href="/products" className="hover:text-slate-900">
             Products
           </Link>
-          <span className="rounded-full bg-indigo-600 px-3 py-1 text-xs font-semibold text-white">
-            Cart (0)
-          </span>
+          {/* The only per-visitor part of the layout. The fallback ships in
+              every page's static shell; the count streams in. */}
+          <Suspense fallback={<CartLink label="Cart" />}>
+            <CartCount />
+          </Suspense>
         </div>
       </nav>
     </header>
+  );
+}
+
+async function CartCount() {
+  const count = countItems(await readCart());
+  return <CartLink label={`Cart (${count})`} />;
+}
+
+function CartLink({ label }: { label: string }) {
+  return (
+    <Link
+      href="/cart"
+      className="rounded-full bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-500"
+    >
+      {label}
+    </Link>
   );
 }

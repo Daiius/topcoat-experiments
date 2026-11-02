@@ -431,3 +431,44 @@
     自前の JS はゼロ。topcoat は runtime JS（gzip 約 15KB）と、shard の引数として埋め込まれる JS 式を配る。
   - 検索結果は毎回リクエスト時のストリームになる（`searchParams` 依存）。0 件時は「0 products matching “…”」と「No products found.」を出す。文言は topcoat と同じ。
 - **所要時間の体感**: 実装 15 分。topcoat 版で詰まった URL 同期と JS の式検査が、丸ごと不要だった。
+
+## 2026-11-03 [Next.js] #4 カートを Server Action + `cookies()` で実装する
+
+- **書こうとしたこと**: 詳細の「Add to cart」、`/cart` での数量変更・削除、ヘッダーの件数表示。topcoat 版と同じく、状態は cookie に置く。
+  cookie の値も topcoat と同じ形式 `[[id,qty],…]` の JSON にした（上限は 50 行・各 99 個）。
+- **書き味**
+  - `'use server'` のファイル（`src/app/cart/actions.ts`）に `addToCart(formData)` / `updateCart(formData)` を書き、
+    `<form action={addToCart}>` に渡すだけ。JS が無い場合は、hidden の action ID 付きの普通の POST になる（docs `forms.md`）。
+    topcoat の「フォーム POST + `#[route(POST)]` + 303」とほぼ同じ量で書け、ルートを別に切る必要もない。
+  - Add to cart は `redirect('/cart')`（AGENTS.md の決定どおり）。
+  - 数量変更は `redirect` を書かなかった。docs（`mutating-data.md`）によれば、**Server Action の中で cookie を set すると、
+    Next が現在のページとレイアウトをサーバーで描き直す**。JS ありなら、ページ遷移なしでカートとヘッダーの件数が同時に更新される。
+    topcoat は #541 のとおり、毎回文書全体を読み直す。
+  - React 19 では、`<form action={fn}>` の送信後に、非制御の入力欄がリセットされる。数量欄は `defaultValue` なので、
+    `key={quantity}` を付けて「サーバーから来た新しい数量で作り直す」ようにした。
+- **署名: Next.js の標準機能には無い**
+  - `cookies()` の API は `get` / `set` / `delete` だけで、署名や暗号化の手段は無い。docs で署名や暗号化が出てくるのは、
+    認証ガイドの「セッションを自前で暗号化する」例（`jose` などの外部ライブラリを使う）だけだった。
+  - そこで、**署名なし**の cookie にした。訪問者が書き換えられるのは自分のカートだけで、読むたびにカタログと照合する
+    （未知の id は捨てる、数量は 1〜99 に丸める、重複を捨てる、50 行で切る）。価格はカタログから引くので、cookie に価格は載らない。
+  - topcoat は署名付き cookie が標準で用意されているが、その代わり `COOKIE_KEY` を全インスタンスで揃える運用が要る（揃わないとカートが黙って消える）。
+    Next は鍵を持たないので、その運用も要らない。「標準で付いてくる安全装置」と「運用の手間」が逆の向きに出ている。
+  - CSRF: Server Action は Origin と Host（または `X-Forwarded-Host`）を比較し、不一致なら中断する（docs `data-security.md`）。
+    cookie は `HttpOnly` / `SameSite=Lax` / `Secure` / `Path=/` で、topcoat と同じ属性にした。
+- **詰まった点 / topcoat との差**
+  - **ヘッダーの件数がレイアウトにあるので、全ページに動的な穴が開く。** 件数は `cookies()` を読む小さな `CartCount` に閉じ込め、
+    `<Suspense fallback="Cart">` で包んだ。これで静的シェルは保たれる。ただし、#1 で完全に静的（`○`）だったホームと 500 件の詳細も、
+    **「静的シェル + リクエスト時の差し込み」（`◐`）になる**見込み。CDN から返せるのはシェルまでで、件数のために毎回サーバーが動く。
+    ページを完全に静的なまま保つなら、件数を Client Component にして、`HttpOnly` でない cookie を `document.cookie` から読む手もある。
+    ただし、AGENTS.md の方針（`cookies()` + `<Suspense>`）を優先した。topcoat はもともと全ページが動的なので、この差は出ない。
+  - `partialPrefetching` の docs には「`cookies()` を読むルートの App Shell はセッションのデータを含み、クライアントではセッションごとにキャッシュされる」とある。
+    件数が prefetch にどう載るか（古い件数が見えないか）は、supervisor の動作確認で見てほしい。
+  - **JS なしの数量変更は PRG にならない。** `redirect` しないので、POST の応答がそのまま `/cart` の HTML になる。リロードすると再送の確認が出るはずだ。
+    topcoat は 303 で GET に戻す。JS ありの体験を優先した流儀どおりの書き方と、JS なしの作法がずれる例。
+  - 未知の商品を Add to cart した場合、topcoat は 404 を返す。Next 版はカートを変えずに `/cart` へ redirect する。
+    Server Action の中で `notFound()` を投げたときの挙動が docs から読み取れなかったので、無視する方を選んだ。
+- **気づき（配信されるもの・予想）**
+  - `/cart`: 見出しとスケルトンが静的シェルで、中身はリクエスト時にストリームされる。
+  - フォームは Server Component のまま。自前の Client JS は増えない。ただし Server Action の呼び出しは React 側の仕組みに乗るので、
+    React の runtime が要る（それはもともと全ページに載っている）。
+- **所要時間の体感**: 実装 25 分。署名の有無と、件数の穴が全ページに広がる影響を docs で確かめて 10 分。

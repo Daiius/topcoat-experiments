@@ -7,6 +7,8 @@ import { RatingStars } from "@/components/rating-stars";
 import { ReviewList } from "@/components/review-list";
 import { SpecTable } from "@/components/spec-table";
 import { ReviewListSkeleton } from "@/components/skeletons";
+import { addToCart } from "@/app/cart/actions";
+import { MAX_QUANTITY } from "@/lib/cart";
 import { formatPrice, formatRating, getProduct, getProductIds, initials } from "@/lib/catalog";
 import { fetchRelated, fetchReviews } from "@/lib/remote";
 
@@ -60,6 +62,30 @@ async function ProductDetail({ params }: Pick<PageProps<"/products/[id]">, "para
               <p key={index}>{paragraph}</p>
             ))}
           </div>
+          {/* A Server Action form inside the static HTML: it posts without
+              JavaScript too. The action updates the cart cookie and
+              redirects to the cart page. */}
+          <form action={addToCart} className="mt-8 flex items-center gap-3">
+            <input type="hidden" name="product_id" value={product.id} />
+            <label className="sr-only" htmlFor="quantity">
+              Quantity
+            </label>
+            <input
+              id="quantity"
+              type="number"
+              name="quantity"
+              min={1}
+              max={MAX_QUANTITY}
+              defaultValue={1}
+              className="w-20 rounded-lg border border-slate-300 px-3 py-3 text-sm"
+            />
+            <button
+              type="submit"
+              className="inline-block rounded-lg bg-indigo-600 px-8 py-3 text-sm font-semibold text-white hover:bg-indigo-500"
+            >
+              Add to cart
+            </button>
+          </form>
         </div>
       </div>
       <section className="mt-16">
