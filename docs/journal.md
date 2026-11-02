@@ -344,9 +344,14 @@
     5.9.3 / 9.39.5 に固定した。
   - **`../data/products.json` の import が、そのままでは解決できない。** Turbopack はロックファイルのある場所を root とみなし、
     root の外のファイルを解決しない（同梱 docs `turbopack.md` の "Root directory"）。公式ベンチは同じ相対 import で動いていたが、
-    あちらは Next 15 で、build が webpack だった。`turbopack.root` と `outputFileTracingRoot` をリポジトリ直下に広げて回避した。
-    docs は「root を広げすぎると watch が重くなる」と警告している。リポジトリ直下には `topcoat/target/` があるので、`next dev` の watch 負荷は要観察。
-    standalone 出力は `.next/standalone/nextjs/server.js` に入れ子になる見込み（tracing root からの相対パスになるため）。
+    あちらは Next 15 で、build が webpack だった。最初は `turbopack.root` と `outputFileTracingRoot` をリポジトリ直下に広げて回避した。
+    しかし docs は「root を広げすぎると watch が重くなる」と警告している。リポジトリ直下には `topcoat/target/` があり、`next dev` がそこまで watch しかねない。
+    さらに standalone 出力が `.next/standalone/nextjs/server.js` に入れ子になる（tracing root からの相対パスになるため）。
+  - **最終的な解決策: root は既定（`nextjs/`）のまま、データをパッケージ内へコピーする。** 画像と同じ `scripts/copy-data.mjs` で、
+    `../data/products.json` を `src/generated/products.json`（gitignore）へコピーし、`@/generated/products.json` を import する。
+    コピーは `predev` / `prebuild` に加え、`pretypecheck` / `prelint` でも走らせる（tsc が JSON の import を解決するため）。
+    `../data` が唯一の正であることは変わらない。`next.config.ts` から root の設定が消えたので、standalone 出力は通常の `.next/standalone/server.js` に戻る見込み。
+    「別ディレクトリの共有データを読む」という素朴な構成が、Turbopack の root の規則によってビルド前コピーという一手間に変わった。
   - 公式の `<a>` は `next/link` の `<Link>` にした。クライアント遷移と prefetch を使うのが Next の流儀なので。
 - **書き味（流儀どおりに書いた箇所）**
   - **ホーム**: `getFeatured()` を `'use cache'` + `cacheLife('max')` にして await するだけ。runtime データを読まないので、ページ全体が静的になる。
@@ -366,6 +371,7 @@
     `<Suspense>` の中で `notFound()` に到達する。docs（`not-found.md`）によれば「ストリーム開始後はステータス 200 のまま、`noindex` を差し込む」。
     つまり **404 ではなく 200 + not-found UI** になる見込み。topcoat は 404 を返す。404 にしたければ、`params` を境界の外で await する
     （App Shell を諦める）か、proxy で弾くことになる。推奨構成どおりに書くと、ステータスコードの正しさと静的シェルが引き換えになる。
+    **静的シェルを先に返す以上、ステータスは後から変えられない。** これは PPR の構造上のトレードオフだ。判断として、Next の流儀（200 + noindex）のまま残した。
   - 公式ベンチの `page` が数値でない場合（`?page=abc`）は 1 ページ目扱いのまま。topcoat は `query_params` の型エラーで 400 を返す。
 - **気づき（配信されるもの・予想）**
   - `/`: 静的（`○`）。HTML は全部ビルド時に生成される。
@@ -527,7 +533,7 @@
 - **書こうとしたこと**: topcoat 版と同じ 24 枚（1600×1600、約 290KB）を、同じ規則 `{category_slug}-{(id % 3) + 1}.jpg` で割り当てる。
   一覧カード・関連商品・詳細の主画像・カートのサムネイルに出す。
 - **素材の持ち込み**
-  - `public/` 配下しか静的配信されないので、`scripts/copy-images.mjs` で `../data/images/*.jpg` を `public/images/` へコピーし、
+  - `public/` 配下しか静的配信されないので、`scripts/copy-data.mjs` で `../data/images/*.jpg` を `public/images/` へコピーし、
     `predev` / `prebuild` から呼ぶ。コピー先は gitignore した。symlink は使っていない（AGENTS.md の決定）。
   - `next.config.ts` の `images.localPatterns` を `{ pathname: '/images/**', search: '' }` に絞った。それ以外のパスや、クエリ付きの最適化要求は 400 になる。
     `qualities` は Next 16 から必須で、`[75]` だけにした。

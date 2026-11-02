@@ -1,6 +1,7 @@
 import { cacheLife } from "next/cache";
 
-import data from "../../../data/products.json";
+// Copied from ../data/products.json by scripts/copy-data.mjs.
+import data from "@/generated/products.json";
 
 export interface Category {
   name: string;

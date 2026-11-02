@@ -4,13 +4,15 @@
   "private": true,
   "packageManager": "pnpm@11.24.0",
   "scripts": {
-    "copy-images": "node scripts/copy-images.mjs",
-    "predev": "node scripts/copy-images.mjs",
+    "copy-data": "node scripts/copy-data.mjs",
+    "predev": "node scripts/copy-data.mjs",
     "dev": "next dev",
-    "prebuild": "node scripts/copy-images.mjs",
+    "prebuild": "node scripts/copy-data.mjs",
     "build": "next build",
     "start": "next start",
+    "pretypecheck": "node scripts/copy-data.mjs",
     "typecheck": "next typegen && tsc --noEmit",
+    "prelint": "node scripts/copy-data.mjs",
     "lint": "eslint ."
   },
   "dependencies": {

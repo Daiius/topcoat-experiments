@@ -6,5 +6,6 @@ next-env.d.ts
 .env*
 .vercel
 
-# Copied from ../data/images by scripts/copy-images.mjs before dev/build.
+# Copied from ../data by scripts/copy-data.mjs before dev/build/typecheck/lint.
 /public/images/
+/src/generated/
