@@ -521,3 +521,39 @@
     topcoat の runtime は全ページに載るので、ここは Next の「必要な所だけ Client Component」が効く。
   - SSE の 1 イベントは `data: 23\n\n` の数バイト。topcoat は WebSocket の JSON フレームで、描画済みの HTML 片を送る。
 - **所要時間の体感**: 移植と突き合わせで 15 分、Route Handler と Client Component で 15 分、lint の回避で 5 分。
+
+## 2026-11-03 [Next.js] #6 商品画像を `next/image` + `sizes` で配信する
+
+- **書こうとしたこと**: topcoat 版と同じ 24 枚（1600×1600、約 290KB）を、同じ規則 `{category_slug}-{(id % 3) + 1}.jpg` で割り当てる。
+  一覧カード・関連商品・詳細の主画像・カートのサムネイルに出す。
+- **素材の持ち込み**
+  - `public/` 配下しか静的配信されないので、`scripts/copy-images.mjs` で `../data/images/*.jpg` を `public/images/` へコピーし、
+    `predev` / `prebuild` から呼ぶ。コピー先は gitignore した。symlink は使っていない（AGENTS.md の決定）。
+  - `next.config.ts` の `images.localPatterns` を `{ pathname: '/images/**', search: '' }` に絞った。それ以外のパスや、クエリ付きの最適化要求は 400 になる。
+    `qualities` は Next 16 から必須で、`[75]` だけにした。
+- **書き味**
+  - **500 商品 → 画像の対応は、文字列のパスを組み立てるだけ。** `src/lib/images.ts` は、カテゴリの集合と 1 行の template literal で済んだ。
+    topcoat の `asset!` は文字列リテラルしか受け取れないので、24 枚の const 表を書き、表と実ファイルの一致をテストで守った。
+    Next では、パスが実在しない場合の検出が「実行時の 404（最適化 API の 400 / 404）」まで遅れる。表と実ファイルの一致は、型でもビルドでも検査されない。
+  - `<Image src width={1600} height={1600} sizes=… className="h-32 w-full object-cover">` と書くと、`srcset` は `deviceSizes` と `imageSizes` から自動で作られる。
+    `sizes` はレイアウトから手計算した。グリッドは 72rem のコンテナに 2 / 3 / 4 列なので、
+    `"(min-width: 1024px) 262px, (min-width: 768px) 33vw, 50vw"` とした。関連商品は 2 / 4 列、詳細の主画像は `lg` で 2 列（約 540px）。
+    カートは `80px` 固定。Tailwind のクラスと `sizes` の文字列が別々に存在し、ずれても何も教えてくれない。そこは topcoat と同じく人間の責任になる。
+- **`preload` / `loading` / `fetchPriority` の使い分け**
+  - Next 16 で `priority` は非推奨になり、`preload` に置き換わった。一覧の先頭カードだけ `preload` にした（AGENTS.md の方針）。
+  - ただし docs（`image.md`）は、「たいていの場合は `preload` ではなく `loading="eager"` か `fetchPriority="high"` を使え」
+    「ビューポートによって LCP 候補が変わる場合は `preload` を使うな」とも書いている。
+    また、**一覧のグリッドは `searchParams` 依存の `<Suspense>` の中にある**ので、`<head>` はすでに送り終わっている。
+    App Router の Image は `ReactDOM.preload` を呼ぶ（`next/dist/client/image-component.js`）。ストリームの途中では `<link rel="preload">` を `<head>` に入れられず、
+    `<img>` と同じチャンクで届くはずだ。その場合、preload の効果はほぼ無いと予想する。supervisor の Lighthouse で確認してほしい。
+  - 詳細の主画像（LCP 候補）は、docs の勧めどおり `loading="eager"` + `fetchPriority="high"` にした。カートのサムネイルは、topcoat の修正と同じ理由で eager にした。
+    `preload` と `loading` / `fetchPriority` は併用しないよう、`ProductPhoto` の中で排他にした。
+- **気づき（配信されるもの・予想）**
+  - 画像は `/_next/image?url=%2Fimages%2Faudio-1.jpg&w=640&q=75` のような URL で、要求された幅に縮小され、Accept に応じて WebP などに変換される。
+    h-32 のカードには、2x DPR でも 640px 前後が選ばれるはずで、topcoat の原寸 290KB に対して 1 枚あたり数十 KB になる見込み。一覧 1 ページの画像総量は、桁で減るはずだ。
+  - **最適化はサーバーの CPU で行われる**（初回のみ。結果は `.next/cache/images` に保存される）。standalone / docker では sharp が要る。
+    pnpm 11 では、`pnpm-workspace.yaml` の `allowBuilds` で `sharp: true` を明示した（公式ベンチは画像を使わないので `false` だった）。
+    Vercel では最適化は Vercel 側で行われ、関数の CPU は使わない。stateless・複数インスタンスのコンテナでは、インスタンスごとにキャッシュが温まるまで初回変換を払う。
+  - `next/image` は `'use client'` の部品（`next/dist/client/image-component.js`）なので、画像を使うページには、その分の Client JS が載る。
+    `onLoad` などを渡していないので、描画は Server Component から HTML として出る。JS は主にハイドレーションのためのもの。
+- **所要時間の体感**: 実装 15 分、`sizes` の手計算と `preload` の docs 読みで 15 分。

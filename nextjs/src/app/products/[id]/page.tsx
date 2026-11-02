@@ -3,6 +3,7 @@ import { Suspense } from "react";
 
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { ProductCard } from "@/components/product-card";
+import { ProductPhoto } from "@/components/product-photo";
 import { RatingStars } from "@/components/rating-stars";
 import { ReviewList } from "@/components/review-list";
 import { ReviewListSkeleton } from "@/components/skeletons";
@@ -10,9 +11,12 @@ import { SpecTable } from "@/components/spec-table";
 import { StockLevel } from "@/components/stock-level";
 import { addToCart } from "@/app/cart/actions";
 import { MAX_QUANTITY } from "@/lib/cart";
-import { formatPrice, formatRating, getProduct, getProductIds, initials } from "@/lib/catalog";
+import { formatPrice, formatRating, getProduct, getProductIds } from "@/lib/catalog";
 import { fetchRelated, fetchReviews } from "@/lib/remote";
 import { currentStock } from "@/lib/stock";
+
+/** Image widths for the 2 / 4 column related-products grid. */
+const RELATED_IMAGE_SIZES = "(min-width: 1024px) 262px, (min-width: 768px) 25vw, 50vw";
 
 // All 500 products are prerendered at build time. Any other ID gets the
 // App Shell (the fallback below) and resolves at request time.
@@ -44,9 +48,13 @@ async function ProductDetail({ params }: Pick<PageProps<"/products/[id]">, "para
         name={product.name}
       />
       <div className="mt-6 grid gap-10 lg:grid-cols-2">
-        <div className="flex aspect-square items-center justify-center rounded-2xl bg-slate-100 text-7xl font-bold text-slate-300">
-          {initials(product.name)}
-        </div>
+        {/* The likely LCP element: load it eagerly at high priority. */}
+        <ProductPhoto
+          product={product}
+          frame="aspect-square rounded-2xl"
+          sizes="(min-width: 1152px) 540px, (min-width: 1024px) 50vw, 100vw"
+          eager
+        />
         <div>
           <p className="text-sm font-medium uppercase tracking-wide text-slate-400">
             {product.category}
@@ -136,7 +144,7 @@ async function Related({ productId }: { productId: number }) {
   return (
     <div className="mt-6 grid grid-cols-2 gap-6 md:grid-cols-4">
       {related.map((entry) => (
-        <ProductCard key={entry.id} product={entry} />
+        <ProductCard key={entry.id} product={entry} sizes={RELATED_IMAGE_SIZES} />
       ))}
     </div>
   );

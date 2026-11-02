@@ -116,8 +116,9 @@ async function ProductResults({ searchParams }: { searchParams: SearchParams }) 
       ) : (
         <>
           <div className={GRID}>
-            {page.items.map((product) => (
-              <ProductCard key={product.id} product={product} />
+            {page.items.map((product, index) => (
+              // Only the first card's image is preloaded (the likely LCP).
+              <ProductCard key={product.id} product={product} preload={index === 0} />
             ))}
           </div>
           <Pagination

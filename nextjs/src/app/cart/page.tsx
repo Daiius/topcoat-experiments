@@ -2,7 +2,8 @@ import Link from "next/link";
 import { Suspense } from "react";
 
 import { MAX_QUANTITY, cartItems, readCart, totalCents } from "@/lib/cart";
-import { formatPrice, initials } from "@/lib/catalog";
+import { formatPrice } from "@/lib/catalog";
+import { ProductPhoto } from "@/components/product-photo";
 
 import { updateCart } from "./actions";
 
@@ -51,9 +52,8 @@ async function CartContents() {
         {items.map(([product, quantity]) => (
           <li key={product.id} className="flex flex-wrap items-center gap-4 p-4">
             <div className="w-20 shrink-0">
-              <div className="flex h-20 items-center justify-center rounded-lg bg-slate-100 text-3xl font-bold text-slate-300">
-                {initials(product.name)}
-              </div>
+              {/* Eager: a cart is short and every row is above the fold. */}
+              <ProductPhoto product={product} frame="h-20 rounded-lg" sizes="80px" eager />
             </div>
             <div className="min-w-0 flex-1">
               <Link

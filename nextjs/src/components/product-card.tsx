@@ -1,18 +1,31 @@
 import Link from "next/link";
 
-import { type Product, formatPrice, formatRating, initials } from "@/lib/catalog";
+import { type Product, formatPrice, formatRating } from "@/lib/catalog";
 
+import { ProductPhoto } from "./product-photo";
 import { RatingStars } from "./rating-stars";
 
-export function ProductCard({ product }: { product: Product }) {
+/**
+ * Image widths for the 2 / 3 / 4 column product grids inside the 72rem
+ * container (a card is at most about 262px wide; the image is narrower).
+ */
+export const GRID_IMAGE_SIZES = "(min-width: 1024px) 262px, (min-width: 768px) 33vw, 50vw";
+
+export function ProductCard({
+  product,
+  sizes = GRID_IMAGE_SIZES,
+  preload = false,
+}: {
+  product: Product;
+  sizes?: string;
+  preload?: boolean;
+}) {
   return (
     <Link
       href={`/products/${product.id}`}
       className="group flex flex-col rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:shadow-md"
     >
-      <div className="mb-4 flex h-32 items-center justify-center rounded-lg bg-slate-100 text-3xl font-bold text-slate-300">
-        {initials(product.name)}
-      </div>
+      <ProductPhoto product={product} frame="mb-4 h-32 rounded-lg" sizes={sizes} preload={preload} />
       <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
         {product.category}
       </p>
