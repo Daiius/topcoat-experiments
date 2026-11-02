@@ -115,7 +115,9 @@ impl Catalog {
 
     /// Returns a page of products after filtering and sorting.
     ///
-    /// `category` matches an exact slug. Unknown slugs produce no results. Pass a
+    /// `category` matches an exact slug. Unknown slugs produce no results.
+    /// `search` keeps products whose name contains it, ignoring case; pass it
+    /// through [`normalize_search`](crate::urls::normalize_search). Pass a
     /// normalized `sort` value. Sorts use ascending ID to break ties, and unknown sort
     /// values use ascending ID throughout. `page` is clamped to the valid range.
     pub fn page(
@@ -123,11 +125,18 @@ impl Catalog {
         page: usize,
         sort: Option<&str>,
         category: Option<&str>,
+        search: Option<&str>,
     ) -> ProductsPage<'_> {
+        let needle = search.map(str::to_lowercase);
         let mut items: Vec<&Product> = self
             .products
             .iter()
             .filter(|product| category.is_none_or(|slug| product.category_slug == slug))
+            .filter(|product| {
+                needle
+                    .as_deref()
+                    .is_none_or(|needle| product.name.to_lowercase().contains(needle))
+            })
             .collect();
 
         match sort {

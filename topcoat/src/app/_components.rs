@@ -1,10 +1,13 @@
 use topcoat::{
     Result,
+    context::Cx,
     view::{PromotedStr, StaticClass, View, class, component, view},
 };
 
 use crate::{
+    cart::cart,
     catalog::{Product, Review, Spec, filled_stars, format_rating},
+    images::{IMAGE_SIZE, product_image},
     urls::products_url,
 };
 
@@ -59,7 +62,10 @@ const FOOTER_COLUMNS: [(&str, [(&str, &str); 4]); 4] = [
 ];
 
 #[component]
-pub async fn site_nav() -> Result<impl View> {
+pub async fn site_nav(cx: &Cx) -> Result<impl View> {
+    // Read on every request: the count comes from the visitor's cookie.
+    let count = cart(cx).read().count();
+
     Ok(view! {
         <header class="border-b border-slate-200 bg-white">
             <nav
@@ -71,11 +77,14 @@ pub async fn site_nav() -> Result<impl View> {
                 <div class="flex items-center gap-6 text-sm font-medium text-slate-600">
                     <a href="/" class="hover:text-slate-900">"Home"</a>
                     <a href="/products" class="hover:text-slate-900">"Products"</a>
-                    <span
-                        class="rounded-full bg-indigo-600 px-3 py-1 text-xs font-semibold text-white"
+                    <a
+                        href="/cart"
+                        class="rounded-full bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-500"
                     >
-                        "Cart (3)"
-                    </span>
+                        "Cart ("
+                        (count)
+                        ")"
+                    </a>
                 </div>
             </nav>
         </header>
@@ -141,11 +150,7 @@ pub async fn product_card(product: &Product) -> Result<impl View> {
             href=(("/products/", product.id))
             class="group flex flex-col rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:shadow-md"
         >
-            <div
-                class="mb-4 flex h-32 items-center justify-center rounded-lg bg-slate-100 text-3xl font-bold text-slate-300"
-            >
-                (product.initials())
-            </div>
+            product_photo(product: product, frame: "mb-4 h-32 rounded-lg", eager: false)
             <p class="text-xs font-medium uppercase tracking-wide text-slate-400">
                 (&product.category)
             </p>
@@ -168,12 +173,41 @@ pub async fn product_card(product: &Product) -> Result<impl View> {
     })
 }
 
+/// A product's image at its original size, scaled down by CSS. `frame` sizes
+/// the box; the image covers it. Falls back to the initials placeholder.
+#[component]
+pub async fn product_photo(product: &Product, frame: &str, eager: bool) -> Result<impl View> {
+    Ok(view! {
+        if let Some(image) = product_image(product) {
+            <img
+                src=(image)
+                alt=(&product.name)
+                width=(IMAGE_SIZE)
+                height=(IMAGE_SIZE)
+                loading=(if eager { "eager" } else { "lazy" })
+                decoding="async"
+                class=(class!(frame, "w-full bg-slate-100 object-cover"))
+            >
+        } else {
+            <div
+                class=(class!(
+                    frame,
+                    "flex items-center justify-center bg-slate-100 text-3xl font-bold text-slate-300",
+                ))
+            >
+                (product.initials())
+            </div>
+        }
+    })
+}
+
 #[component]
 pub async fn pagination(
     current: usize,
     page_count: usize,
     sort: Option<&str>,
     category: Option<&str>,
+    search: Option<&str>,
 ) -> Result<impl View> {
     Ok(view! {
         <nav
@@ -181,7 +215,10 @@ pub async fn pagination(
             class="mt-10 flex flex-wrap items-center justify-center gap-1 text-sm"
         >
             if current > 1 {
-                <a href=(products_url(current - 1, sort, category)) class=(PAGE_LINK)>
+                <a
+                    href=(products_url(current - 1, sort, category, search))
+                    class=(PAGE_LINK)
+                >
                     "Previous"
                 </a>
             } else {
@@ -191,13 +228,19 @@ pub async fn pagination(
                 if number == current {
                     <span aria-current="page" class=(PAGE_CURRENT)>(number)</span>
                 } else {
-                    <a href=(products_url(number, sort, category)) class=(PAGE_LINK)>
+                    <a
+                        href=(products_url(number, sort, category, search))
+                        class=(PAGE_LINK)
+                    >
                         (number)
                     </a>
                 }
             }
             if current < page_count {
-                <a href=(products_url(current + 1, sort, category)) class=(PAGE_LINK)>
+                <a
+                    href=(products_url(current + 1, sort, category, search))
+                    class=(PAGE_LINK)
+                >
                     "Next"
                 </a>
             } else {

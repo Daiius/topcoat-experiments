@@ -1,25 +1,45 @@
 mod _components;
+mod cart;
 mod products;
 
 use topcoat::{
     Result,
-    asset::{Asset, AssetBundle, RouterBuilderAssetExt, asset},
+    asset::{Asset, AssetBundle, AssetConfig, RouterBuilderAssetExt, asset},
     context::{Cx, app_context},
-    router::{Router, Slot, layout, page},
+    cookie::{Key, RouterBuilderCookieExt},
+    router::{Router, RouterBuilderDiscoverExt, Slot, layout, page},
+    runtime::RouterBuilderRuntimeExt,
     view::{View, view},
 };
 
 use crate::{
     app::_components::{product_card, site_footer, site_nav},
+    cart::signing_key,
     catalog::Catalog,
 };
 
 const TAILWIND_CSS: Asset = asset!("assets/tailwind.css");
 
 pub fn router() -> Router {
+    build(
+        AssetBundle::load()
+            .expect("asset bundle loads; run `topcoat asset bundle`")
+            .into(),
+        signing_key(),
+    )
+}
+
+fn build(assets: AssetConfig, cookie_key: Key) -> Router {
     topcoat::router::module_router!()
         .app_context(Catalog::load())
-        .assets(AssetBundle::load().expect("asset bundle loads; run `topcoat asset bundle`"))
+        // Signs the cart cookie. Load the same key on every instance.
+        .cookies()
+        .app_context(cookie_key)
+        .assets(assets)
+        // Registers the shards (and procedures) declared anywhere in the app.
+        .discover()
+        // Layers that should see runtime reruns as plain GETs go above this.
+        .runtime()
         .build()
 }
 
@@ -33,6 +53,9 @@ async fn root_layout(slot: Slot<'_>) -> Result<impl View> {
                 <meta name="viewport" content="width=device-width, initial-scale=1">
                 <title>"Meridian Supply"</title>
                 <link rel="stylesheet" href=(TAILWIND_CSS)>
+                // The browser runtime for shards and live regions. It loads on
+                // every page because the layout is shared.
+                topcoat::runtime::script()
             </head>
             <body class="flex min-h-screen flex-col bg-slate-50 text-slate-900">
                 site_nav()
@@ -77,4 +100,300 @@ async fn home(cx: &Cx) -> Result<impl View> {
             </div>
         </section>
     })
+}
+
+/// End-to-end tests through the real router: module pages, layout, cookies,
+/// and the runtime, with placeholder asset URLs instead of a bundle.
+#[cfg(test)]
+mod tests {
+    use topcoat::router::{
+        Body, StatusCode,
+        header::{CONTENT_TYPE, COOKIE, LOCATION, SET_COOKIE},
+        request::Request,
+        response::Response,
+        to_bytes,
+    };
+
+    use super::*;
+    use crate::images::test_asset_config;
+
+    fn test_router() -> Router {
+        build(
+            test_asset_config(&[
+                (TAILWIND_CSS, "tailwind.css"),
+                (topcoat::runtime::SCRIPT, "topcoat.js"),
+            ]),
+            Key::generate(),
+        )
+    }
+
+    async fn send(router: &Router, request: Request) -> (Response, String) {
+        let response = router.handle(request).await;
+        let (parts, body) = response.into_parts();
+        let bytes = to_bytes(body, usize::MAX).await.unwrap();
+        (
+            Response::from_parts(parts, Body::empty()),
+            String::from_utf8(bytes.to_vec()).unwrap(),
+        )
+    }
+
+    async fn get(router: &Router, path: &str, cookie: Option<&str>) -> String {
+        let mut request = Request::builder().uri(path);
+        if let Some(cookie) = cookie {
+            request = request.header(COOKIE, cookie);
+        }
+        let (response, html) = send(router, request.body(Body::empty()).unwrap()).await;
+        assert_eq!(response.status(), StatusCode::OK, "{html}");
+        html
+    }
+
+    /// Posts a form and returns the response and the `name=value` part of
+    /// the cart cookie it sets, if any.
+    async fn post(
+        router: &Router,
+        path: &str,
+        form: &str,
+        cookie: Option<&str>,
+    ) -> (Response, Option<String>) {
+        let mut request = Request::builder()
+            .method("POST")
+            .uri(path)
+            .header(CONTENT_TYPE, "application/x-www-form-urlencoded");
+        if let Some(cookie) = cookie {
+            request = request.header(COOKIE, cookie);
+        }
+        let (response, _) = send(router, request.body(Body::from(form.to_owned())).unwrap()).await;
+        let cart_cookie = response
+            .headers()
+            .get_all(SET_COOKIE)
+            .iter()
+            .map(|value| value.to_str().unwrap())
+            .find(|value| value.starts_with("cart="))
+            .map(|value| value.split(';').next().unwrap().to_owned());
+        (response, cart_cookie)
+    }
+
+    #[tokio::test]
+    async fn an_empty_cart_shows_zero_and_a_hint() {
+        let router = test_router();
+        let html = get(&router, "/cart", None).await;
+        assert!(html.contains("Cart (0)"), "{html}");
+        assert!(html.contains("Your cart is empty."), "{html}");
+    }
+
+    #[tokio::test]
+    async fn adding_updating_and_removing_round_trip_through_the_cookie() {
+        let router = test_router();
+        let first = Catalog::load().get(1).unwrap().name.clone();
+        let second = Catalog::load().get(2).unwrap().name.clone();
+
+        let (response, cookie) = post(&router, "/cart/add", "product_id=1&quantity=2", None).await;
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        assert_eq!(response.headers()[LOCATION], "/cart");
+        let cookie = cookie.expect("adding sets the cart cookie");
+        let set_cookie = response.headers()[SET_COOKIE].to_str().unwrap();
+        assert!(set_cookie.contains("HttpOnly"), "{set_cookie}");
+        assert!(set_cookie.contains("SameSite=Lax"), "{set_cookie}");
+
+        let (_, cookie) = post(&router, "/cart/add", "product_id=2", Some(&cookie)).await;
+        let cookie = cookie.unwrap();
+        let html = get(&router, "/cart", Some(&cookie)).await;
+        assert!(html.contains("Cart (3)"), "{html}");
+        assert!(html.contains(&first) && html.contains(&second), "{html}");
+
+        let (_, cookie) = post(
+            &router,
+            "/cart/update",
+            "product_id=1&quantity=5",
+            Some(&cookie),
+        )
+        .await;
+        let cookie = cookie.unwrap();
+        assert!(
+            get(&router, "/cart", Some(&cookie))
+                .await
+                .contains("Cart (6)")
+        );
+
+        let (_, cookie) = post(
+            &router,
+            "/cart/update",
+            "product_id=1&quantity=0",
+            Some(&cookie),
+        )
+        .await;
+        let cookie = cookie.unwrap();
+        let html = get(&router, "/cart", Some(&cookie)).await;
+        assert!(html.contains("Cart (1)"), "{html}");
+        assert!(!html.contains(&first), "{html}");
+    }
+
+    /// Every cart row gets its product's image, loaded eagerly.
+    #[tokio::test]
+    async fn cart_rows_show_their_thumbnails_eagerly() {
+        let router = test_router();
+        let (_, cookie) = post(&router, "/cart/add", "product_id=1", None).await;
+        let (_, cookie) = post(&router, "/cart/add", "product_id=42", cookie.as_deref()).await;
+        let html = get(&router, "/cart", cookie.as_deref()).await;
+        let catalog = Catalog::load();
+        for id in [1, 42] {
+            let product = catalog.get(id).unwrap();
+            let file = format!(
+                "https://assets.test/{}-{}.jpg",
+                product.category_slug,
+                id as usize % crate::images::VARIANTS + 1
+            );
+            let tag = format!("<img src=\"{file}\" alt=\"{}\"", product.name);
+            let at = html
+                .find(&tag)
+                .unwrap_or_else(|| panic!("{tag} missing from {html}"));
+            let end = at + html[at..].find('>').unwrap();
+            assert!(
+                html[at..end].contains("loading=\"eager\""),
+                "{}",
+                &html[at..end]
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_tampered_cookie_reads_as_an_empty_cart() {
+        let router = test_router();
+        let (_, cookie) = post(&router, "/cart/add", "product_id=1", None).await;
+        // Swap the signed value's payload for one claiming 99 units.
+        let cookie = cookie.unwrap();
+        let (name_and_signature, _) = cookie.split_at(cookie.find("%5B").unwrap());
+        let forged = format!("{name_and_signature}%5B%5B1%2C99%5D%5D");
+        let html = get(&router, "/cart", Some(&forged)).await;
+        assert!(html.contains("Cart (0)"), "{html}");
+    }
+
+    #[tokio::test]
+    async fn unknown_products_cannot_be_added() {
+        let router = test_router();
+        let (response, cookie) = post(&router, "/cart/add", "product_id=9999", None).await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert!(cookie.is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_detail_page_shows_the_current_stock_and_finishes() {
+        let router = test_router();
+        let before = crate::stock::stock_at(1, std::time::SystemTime::now());
+        // The HTTP render emits once and ends; it must not wait for the
+        // next interval (with paused time, a wait would surface as a jump).
+        let started = tokio::time::Instant::now();
+        let html = get(&router, "/products/1", None).await;
+        let after = crate::stock::stock_at(1, std::time::SystemTime::now());
+        assert!(started.elapsed() < crate::stock::STOCK_INTERVAL);
+        assert!(
+            html.contains("::topcoat::shard::start(\"/_shards/stock-level\""),
+            "{html}"
+        );
+        // The shard asks the browser for a connected (WebSocket) render.
+        assert!(html.contains("<!--::topcoat::connect-->"), "{html}");
+        let shown = |level| match level {
+            0 => "Out of stock".to_owned(),
+            level if level <= crate::stock::LOW_STOCK => format!("Only {level} left in stock"),
+            level => format!("{level} in stock"),
+        };
+        // A slot boundary may pass during the request.
+        assert!(
+            html.contains(&shown(before)) || html.contains(&shown(after)),
+            "{html}"
+        );
+    }
+
+    /// Pulls every `data-topcoat-on:*` / `data-topcoat-bind:*` attribute out
+    /// of `html` as `(name, decoded JavaScript source)`.
+    fn runtime_expressions(html: &str) -> Vec<(String, String)> {
+        let mut found = Vec::new();
+        let mut rest = html;
+        while let Some(start) = rest.find(" data-topcoat-") {
+            rest = &rest[start + 1..];
+            let Some(eq) = rest.find("=\"") else { break };
+            let name = &rest[..eq];
+            let value_start = eq + 2;
+            let Some(len) = rest[value_start..].find('"') else {
+                break;
+            };
+            let value = &rest[value_start..value_start + len];
+            if name.starts_with("data-topcoat-on:") || name.starts_with("data-topcoat-bind:") {
+                let source = value
+                    .replace("&quot;", "\"")
+                    .replace("&#39;", "'")
+                    .replace("&lt;", "<")
+                    .replace("&gt;", ">")
+                    .replace("&amp;", "&");
+                found.push((name.to_owned(), source));
+            }
+            rest = &rest[value_start + len..];
+        }
+        found
+    }
+
+    /// The browser compiles each runtime expression with
+    /// `new Function("cx", "return " + source + ";")` (`expression/compile.ts`
+    /// in the runtime). Rust type-checks the expression but never parses the
+    /// JavaScript it lowers to, so a syntax error there only shows up in the
+    /// browser. This runs the same wrapper through `node --check`.
+    fn assert_compiles_as_javascript(page: &str, expressions: &[(String, String)]) {
+        use std::{io::Write, process::Command};
+
+        let Ok(version) = Command::new("node").arg("--version").output() else {
+            eprintln!("skipping the JavaScript syntax check: node is not installed");
+            return;
+        };
+        assert!(version.status.success());
+
+        let dir = std::env::temp_dir().join(format!("topcoat-js-check-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for (index, (name, source)) in expressions.iter().enumerate() {
+            let path = dir.join(format!(
+                "{}-{index}.js",
+                page.trim_matches('/').replace('/', "_")
+            ));
+            let mut file = std::fs::File::create(&path).unwrap();
+            writeln!(file, "(function (cx) {{ return {source}; }});").unwrap();
+            drop(file);
+            let output = Command::new("node")
+                .arg("--check")
+                .arg(&path)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{page}: {name} is not valid JavaScript:\n{source}\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn runtime_expressions_compile_as_javascript() {
+        let router = test_router();
+        for page in ["/products", "/products?q=lamp", "/products/1", "/cart", "/"] {
+            let html = get(&router, page, None).await;
+            let expressions = runtime_expressions(&html);
+            if page.starts_with("/products") && !page.starts_with("/products/") {
+                assert!(
+                    expressions
+                        .iter()
+                        .any(|(name, _)| name == "data-topcoat-on:input"),
+                    "{page}: the search handler is missing: {expressions:?}"
+                );
+            }
+            assert_compiles_as_javascript(page, &expressions);
+        }
+    }
+
+    #[tokio::test]
+    async fn the_products_page_renders_the_search_shard_and_runtime() {
+        let router = test_router();
+        let html = get(&router, "/products?q=headphones&sort=price", None).await;
+        assert!(html.contains("14 products matching"), "{html}");
+        assert!(html.contains("::topcoat::shard::start"), "{html}");
+        assert!(html.contains("https://assets.test/topcoat.js"), "{html}");
+    }
 }

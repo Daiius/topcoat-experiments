@@ -1,6 +1,9 @@
 mod app;
+mod cart;
 mod catalog;
+mod images;
 mod remote;
+mod stock;
 mod urls;
 
 #[cfg(not(target_env = "msvc"))]
