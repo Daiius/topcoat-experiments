@@ -1,0 +1,30 @@
+[package]
+name = "storefront-topcoat"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1.51.1", features = ["rt-multi-thread", "macros", "time"] }
+topcoat = "=0.11.0"
+
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+tikv-jemallocator = "0.7"
+
+[dev-dependencies]
+tokio = { version = "1.51.1", features = ["test-util"] }
+
+[build-dependencies]
+topcoat = { version = "=0.11.0", default-features = false, features = ["tailwind"] }
+
+# Lints carried over from the topcoat workspace the benchmark was written in.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+mod_module_files = "deny"
+pedantic = { level = "warn", priority = -1 }
+too_many_lines = "allow"
