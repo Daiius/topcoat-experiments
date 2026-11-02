@@ -166,3 +166,22 @@ load generator は同一ホスト。Next.js は `next start` 相当の standalon
 所見: **画像の差はフレームワークの能力差ではなく「標準で持っているか」の差**。topcoat でも 35 分の手書きで Next.js 以上の LCP に届く。
 ただし Next.js は「画像を足すたびに何も考えなくてよい」のに対し、topcoat は「画像の追加・変更のたびにスクリプトを回す」運用が残る。
 （Next の LCP には `/_next/image` の実行時変換が含まれる。Vercel ではエッジキャッシュに載るので、デプロイ後に再比較）
+
+## 10. 実験: Next.js の「動的な穴 1 つ」を外す（`exp/nextjs-static-header`、main には未 merge）
+
+- 変更: ヘッダーのカート件数を `cookies()` + `<Suspense>` から、表示用 cookie `cart_count`（HttpOnly なし）を読む Client Component
+  （`useSyncExternalStore` + Cookie Store API）へ。コード 4 ファイル +80/−30
+- `next build`: `/` が ◐ → **○ Static** に。`/products`（searchParams）、`/products/[id]`（レビュー・在庫）、`/cart` は ◐ のまま
+- `/` の応答: `Cache-Control: s-maxage=2592000, stale-while-revalidate=…`、`x-nextjs-cache: HIT`（前: `private, no-store`）
+
+| `/`（docker cpus=1, oha 20s×32） | 動的な穴あり（main） | 穴なし（実験） | topcoat |
+|---|---|---|---|
+| 最大 RPS | 95 | **699**（7.4 倍） | 5,677 |
+| p99 | 789ms | 98ms | 7ms |
+| `/products/1` 最大 RPS | 90 | 90（穴が残るので不変） | 40 |
+
+- ブラウザ: 件数は追加・数量変更に追従（0→1→4）。静的 HTML には件数が無く hydration 後に表示（JS なしでは「Cart」のまま）
+- トレードオフ: HttpOnly でない cookie、件数の二重管理（旧 cookie・消えた商品でずれる）、JS 依存の表示
+- 所見: **Next.js の効率は「どこに動的な穴を開けるか」の設計判断で 1 桁変わる**。しかも穴はヘッダーの件数表示のような
+  「全ページ共通の小さな UI」から入り込む。topcoat は全部動的が前提なので、この判断自体が存在しない（そして素の SSR が速い）。
+  自前ホストでは穴の有無が CPU に直結。Vercel では ◐ でも静的シェルはエッジから返るため差は縮むはず → デプロイで確認
