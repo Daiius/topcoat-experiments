@@ -18,3 +18,7 @@
 | D11 | 11-03 | 自律 | host toolchain に clippy を追加（`rustup component add clippy`） | 静的チェックに必要 |
 | D12 | 11-03 | 自律 | Vercel への実デプロイは朝以降（アカウント操作が要る）。夜間は Vercel 互換 Dockerfile の準備とローカル docker 計測まで | goal の「ローカルで進められる範囲」。Vercel 調査: CDN に載るのは `s-maxage` 付き応答のみ、SSE は最大実行時間 300s(Hobby) で切れる前提 |
 | D13 | 11-03 | 自律 | Docker は glibc + `gcr.io/distroless/cc-debian12:nonroot`（topcoat）/ `distroless/nodejs*-debian12:nonroot`（Next.js standalone）。依存キャッシュは BuildKit cache mount | cephylas は distroless/cc の素朴な 2 段のみ。Vercel 公式 Rust ガイドも cc-debian12:nonroot。musl は jemalloc と相性が悪い |
+| D14 | 11-03 | 自律 | Next.js は 16.4 系 + Cache Components の推奨構成。#2 はレビュー=非キャッシュでストリーム、関連商品=`use cache` で静的シェルに焼く。topcoat は両方ストリーム | Next の流儀では共有データはキャッシュして遅延を消すのが正解。topcoat にリクエスト跨ぎキャッシュが無い差を比較材料にする |
+| D15 | 11-03 | 自律 | Next.js の在庫 live は SSE（Route Handler + EventSource）。polling は考察で触れる | topcoat `live!` と同じ土俵で比べるため。Vercel では polling が素直という調査結果あり |
+| D16 | 11-03 | 自律 | 並列度は 1 を維持（topcoat 第 2 弾の完了後に Next.js 版） | /supervise の規定（明示指示があるときだけ増やす） |
+| D17 | 11-03 | 自律 | Next.js の画像は `data/images` をビルド前コピーで `public/images` へ（symlink 不使用） | symlink は .gitignore の効き方が罠になる |

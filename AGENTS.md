@@ -47,6 +47,23 @@
 | 5 | 在庫の live 更新 | `live!` / SSE | Route Handler SSE または polling |
 | 6 | 商品画像 | `asset!`（最適化なし） | `next/image` |
 
+## Next.js 版の実装方針（2026-11 時点の推奨構成）
+
+- **Next.js 16.4 系の最新パッチに固定**（`npm view next version` で確認し exact 指定）。React 19.3 系、Turbopack 既定、pnpm
+- `next.config.ts`: `cacheComponents: true`, `partialPrefetching: true`, `images.localPatterns` / `qualities`,
+  `output: process.env.STANDALONE ? 'standalone' : undefined`（docker 計測用。Vercel では未使用）
+- #1 詳細: `generateStaticParams` で 500 件 + カタログ読み込みは `'use cache'` + `cacheLife('max')`。
+  一覧: `searchParams` は Promise のまま Suspense 内で await、絞り込みは引数付き `'use cache'` 関数
+- #2 **レビューは鮮度が要るデータ扱い（キャッシュしない → `<Suspense>` でストリーム）、関連商品は `'use cache'` で静的シェルに焼く**。
+  topcoat はリクエスト跨ぎのキャッシュ機構が無いので両方ストリームのまま（この差自体が比較材料）
+- #3 検索: `next/form` の `<Form action="">`（GET）+ Server Component の `searchParams`
+- #4 カート: Server Action + `cookies().set`、ヘッダー件数は `cookies()` を読む小コンポーネントを `<Suspense>` で包む（それ以外は静的シェル）。
+  フォームは `<form action={serverAction}>` で JS なしでも動く形
+- #5 在庫 live: Route Handler で SSE（`ReadableStream`）+ Client Component の `EventSource`、`maxDuration` 指定。
+  （Vercel では polling の方が素直、という考察は journal に書く）
+- #6 画像: `data/images/` をビルド前スクリプトで `public/images/` にコピー（**symlink は使わない**。コピー先は gitignore）、
+  `next/image` + `sizes`、一覧先頭のみ `preload`
+
 ## 未決事項（既決として実装しないこと）
 
 - Vercel コンテナ上で SSE の長時間接続が使えるか（関数最大実行時間 Hobby 300 秒）。駄目なら polling 等に退避し、それ自体を知見として記録する
