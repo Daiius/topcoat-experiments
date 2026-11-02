@@ -5,12 +5,14 @@ import { Breadcrumbs } from "@/components/breadcrumbs";
 import { ProductCard } from "@/components/product-card";
 import { RatingStars } from "@/components/rating-stars";
 import { ReviewList } from "@/components/review-list";
-import { SpecTable } from "@/components/spec-table";
 import { ReviewListSkeleton } from "@/components/skeletons";
+import { SpecTable } from "@/components/spec-table";
+import { StockLevel } from "@/components/stock-level";
 import { addToCart } from "@/app/cart/actions";
 import { MAX_QUANTITY } from "@/lib/cart";
 import { formatPrice, formatRating, getProduct, getProductIds, initials } from "@/lib/catalog";
 import { fetchRelated, fetchReviews } from "@/lib/remote";
+import { currentStock } from "@/lib/stock";
 
 // All 500 products are prerendered at build time. Any other ID gets the
 // App Shell (the fallback below) and resolves at request time.
@@ -57,6 +59,11 @@ async function ProductDetail({ params }: Pick<PageProps<"/products/[id]">, "para
             </span>
           </div>
           <p className="mt-6 text-4xl font-bold">{formatPrice(product.price_cents)}</p>
+          {/* Time-dependent, so not in the static HTML: the current level
+              streams in, then the Client Component keeps it live. */}
+          <Suspense fallback={<p className="mt-3 h-5 w-24 animate-pulse rounded bg-slate-100" />}>
+            <LiveStock productId={product.id} />
+          </Suspense>
           <div className="mt-6 space-y-4 text-slate-600">
             {product.description.map((paragraph, index) => (
               <p key={index}>{paragraph}</p>
@@ -108,6 +115,13 @@ async function ProductDetail({ params }: Pick<PageProps<"/products/[id]">, "para
       </section>
     </>
   );
+}
+
+/** The stock level now, handed to the client to keep up to date. */
+async function LiveStock({ productId }: { productId: number }) {
+  // Reads the clock after `connection()`: at build time this stays a hole.
+  const level = await currentStock(productId);
+  return <StockLevel productId={productId} initialLevel={level} />;
 }
 
 /** Reviews come from a slow, uncached service, so they stream in. */

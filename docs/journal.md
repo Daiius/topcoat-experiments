@@ -472,3 +472,52 @@
   - フォームは Server Component のまま。自前の Client JS は増えない。ただし Server Action の呼び出しは React 側の仕組みに乗るので、
     React の runtime が要る（それはもともと全ページに載っている）。
 - **所要時間の体感**: 実装 25 分。署名の有無と、件数の穴が全ページに広がる影響を docs で確かめて 10 分。
+
+## 2026-11-03 [Next.js] #5 在庫数を Route Handler の SSE + `EventSource` で live 更新する
+
+- **書こうとしたこと**: 詳細ページに在庫数を出し、5 秒ごとに更新する。値の計算式は `topcoat/src/stock.rs` を移植し、
+  同じ時刻なら topcoat 版と同じ値になるようにする。
+- **計算式の移植**
+  - SplitMix64 は 64 bit の wrapping 演算なので、`number`（53 bit）では書けない。`BigInt` で書き、各演算の後に `& (2^64 - 1)` で丸めた。
+    `saturating_sub(6)` は「負なら 0」に置き換えた。
+  - 移植の確認: `stock.rs` の関数部分をそのまま切り出した scratch の Rust（`rustc --edition 2024`）と、`src/lib/stock.ts` を node で読み込んだ結果を比べた。
+    id 5 種 × 時刻 5 点（スロット境界の前後を含む）の `stock_at` / `until_next_change` が、**25 行すべて一致**した。
+    プロジェクトのテストには入れていない（Next 版にはテストランナーを入れていないため）。
+  - **create-next-app の `tsconfig.json` は `target: ES2017` なので、`BigInt` リテラル（`1n`）が型エラーになる**（TS2737）。
+    `ES2020` に上げた。noEmit なので出力には影響しない（変換は SWC が受け持つ）。
+    ただし、上げた直後の `tsc --noEmit` は**同じエラーを出し続けた**。`incremental: true` の `tsconfig.tsbuildinfo` が古い診断を持っていたためで、
+    ファイルを消すと通った。
+- **書き味**
+  - Route Handler（`src/app/api/stock/[id]/route.ts`）は `ReadableStream` を返すだけ。最初に `retry: 1000` と現在値を送り、
+    以後は `setTimeout(send, untilNextChange(now))` で次のスロット境界ごとに 1 行ずつ送る。topcoat の `live!` の loop と同じ形になった。
+    `request.signal` の abort でタイマーを止める。
+  - `export const maxDuration = 300` を付けた。ストリームは、それより 10 秒早く自分から閉じる。`EventSource` は閉じられると
+    `retry` の 1 秒後に再接続し、サーバーは接続時に現在値を送り直す。状態を持たない設計なので、再接続で値がずれない（topcoat と同じ性質）。
+  - **`next start` の gzip がイベントを溜め込む恐れがある**。Next は内部で `compression` パッケージ（`next/dist/compiled/compression`）を使っている。
+    `Cache-Control: no-cache, no-transform` を付けた。`compression` は `no-transform` を見ると圧縮を飛ばすので、溜め込みも起きないはず。
+    実際にイベントが 5 秒ごとに届くかは supervisor の確認待ち。
+  - 表示側は `'use client'` の `StockLevel` で、`useEffect` の中で `EventSource` を開き、`onmessage` で state を更新するだけ。
+    `cacheComponents` では、遷移で隠れたルートの effect が片付けられる（docs `cacheComponents.md` の "Navigation with Activity"）。
+    そのため、ページを離れると接続も閉じる。
+  - **初期値は静的 HTML に入れられない**（時刻に依存するため）。`<Suspense>` の中の Server Component で `connection()` の後に時計を読み、
+    現在値を `initialLevel` として Client Component に渡した。JS が無くても、その時点の在庫は見える。
+- **詰まった点: `react-hooks/purity` が Server Component の `Date.now()` を弾いた**
+  - `await connection()` の後で `stockAt(id, Date.now())` を JSX に書いたところ、`pnpm lint` が
+    ``Error: Cannot call impure function during render`` を出した（eslint-config-next 16.4.4 が使う `eslint-plugin-react-hooks` 7.1.1）。
+  - この lint は、Server Component がリクエストごとに 1 回しか描画されないことも、`connection()` で「リクエスト時に限る」と宣言したことも知らない。
+    docs は「`connection()` の後なら `Date.now()` を使ってよい」と書いているので、**docs が勧める書き方を、同梱の lint が止める**形になった。
+  - 時計を読む処理を `currentStock(id)`（`connection()` + `Date.now()`）として `src/lib/stock.ts` に移して回避した。
+    `fetchReviews` と同じく「関数自身がリクエスト時専用だと宣言する」形になり、結果的に読みやすくはなった。
+- **transport と Vercel での考察**
+  - SSE は**ブラウザのタブ × 商品ごとに HTTP 接続を 1 本**持つ。HTTP/1.1 では、同じオリジンへの同時接続が 6 本までなので、
+    詳細ページを 6 タブ開くと他のリクエストが詰まりうる（HTTP/2 なら多重化される）。topcoat は文書ごとに WebSocket を 1 本開き、その上で run を多重化する。
+  - Vercel の Functions では、SSE の接続中、関数がずっと占有される（上限は `maxDuration`）。在庫の値は**時刻から決まり、5 秒間は誰が見ても同じ**だ。
+    そのため、`GET /api/stock/1` を「次の境界まで `s-maxage`」で返す **polling** にすれば、ほぼすべてのリクエストが CDN で返り、関数は 5 秒に 1 回しか動かない。
+    「サーバーから押す」より「CDN にキャッシュされた値を引く」方が、Vercel の課金と構造に素直に乗る。今回は topcoat の `live!` と同じ土俵で比べるため、SSE のまま実装した
+    （AGENTS.md の方針どおり。SSE が Vercel で実際に何秒保つかは未決事項のまま）。
+- **気づき（配信されるもの・予想）**
+  - 詳細ページの動的な穴は 3 つになった（在庫の初期値、レビュー、ヘッダーのカート件数）。関連商品を含め、それ以外は静的 HTML のまま。
+  - Client JS: `StockLevel`（`useState` + `useEffect` + `EventSource`、自前のコードは数十行）のチャンクが、詳細ページだけに載る。
+    topcoat の runtime は全ページに載るので、ここは Next の「必要な所だけ Client Component」が効く。
+  - SSE の 1 イベントは `data: 23\n\n` の数バイト。topcoat は WebSocket の JSON フレームで、描画済みの HTML 片を送る。
+- **所要時間の体感**: 移植と突き合わせで 15 分、Route Handler と Client Component で 15 分、lint の回避で 5 分。
