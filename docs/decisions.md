@@ -27,3 +27,4 @@
 | D20 | 11-03 | 自律 | runtime JS（48KB, gzip 15KB）の全ページ読み込みは現状維持し知見として記録 | ページ単位の出し分け手段が docs に無い |
 | D21 | 11-03 | 自律 | Add to cart 後は両版とも `/cart` へ redirect | 挙動を揃えて比較するため |
 | D22 | 11-03 | 自律 | topcoat 第 2 弾（#3〜#6 + 修正 3 件）を supervisor 検証のうえ main へ仮 merge。ユーザー受け入れは朝に一括 | Next.js 版が `data/images` を使うため先に main へ。スクショは `scratchpad/shots/p2/` |
+| D23 | 11-03 | 自律 | Vercel 案を継続（D3 の再検討条件に該当せず） | ソース読みで topcoat は長時間起動前提でないと判断（状態はクライアント再送・WS 自動再接続・SIGTERM 30s graceful）。live 通知のインスタンス間共有だけ要外部化 |
