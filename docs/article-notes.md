@@ -185,3 +185,18 @@ load generator は同一ホスト。Next.js は `next start` 相当の standalon
 - 所見: **Next.js の効率は「どこに動的な穴を開けるか」の設計判断で 1 桁変わる**。しかも穴はヘッダーの件数表示のような
   「全ページ共通の小さな UI」から入り込む。topcoat は全部動的が前提なので、この判断自体が存在しない（そして素の SSR が速い）。
   自前ホストでは穴の有無が CPU に直結。Vercel では ◐ でも静的シェルはエッジから返るため差は縮むはず → デプロイで確認
+
+## 11. 開発ループの速度（ローカル、同一マシン）
+
+| 指標 | topcoat | Next.js |
+|---|---|---|
+| 開発サーバー起動 | （`cargo build` 後すぐ。バイナリ起動 ≒10ms） | `next dev` Ready 232ms（プロセス起動含め 630ms） |
+| 初回フルビルド（debug / dev 初回コンパイル） | `cargo build` 38.2s（依存込み） | `/products` 初回 1.8s、`/products/1` 1.3s（ルート単位の遅延コンパイル） |
+| **1 ファイル編集 → 反映** | `cargo build` 0.8〜1.3s（+ `topcoat dev` の再起動・リロード） | **約 250ms**（HMR、3 回とも 229〜257ms） |
+| release / 本番ビルド | `cargo build --release` 29.0s（フル）・**差分 4.1s**、`topcoat asset bundle --release` 0.1s | `next build` 約 11s（コンパイル 1.5s + TS 1.3s + 静的生成 8.5s） |
+| 成果物 | バイナリ 10.5MB + assets | standalone（イメージ 350MB 展開） |
+| 型検査・lint | `cargo check`/`clippy` | `next typegen && tsc --noEmit` / eslint |
+
+- topcoat の差分ビルドは issue #486 の「5kloc で 37 秒」ほど遅くはなかった（約 2.5kloc、debug 差分 1 秒前後）。規模依存の可能性
+- 小ネタ: **`next dev`（16.4）は `nextjs/AGENTS.md` に AI エージェント向けの注意書き（「This is NOT the Next.js you know」）を自動で書き込む**。
+  削除しても再生成されるので、Next.js 自身がコミットを勧めている
