@@ -199,6 +199,7 @@ pub async fn pagination(
     page_count: usize,
     sort: Option<&str>,
     category: Option<&str>,
+    search: Option<&str>,
 ) -> Result<impl View> {
     Ok(view! {
         <nav
@@ -206,7 +207,10 @@ pub async fn pagination(
             class="mt-10 flex flex-wrap items-center justify-center gap-1 text-sm"
         >
             if current > 1 {
-                <a href=(products_url(current - 1, sort, category)) class=(PAGE_LINK)>
+                <a
+                    href=(products_url(current - 1, sort, category, search))
+                    class=(PAGE_LINK)
+                >
                     "Previous"
                 </a>
             } else {
@@ -216,13 +220,19 @@ pub async fn pagination(
                 if number == current {
                     <span aria-current="page" class=(PAGE_CURRENT)>(number)</span>
                 } else {
-                    <a href=(products_url(number, sort, category)) class=(PAGE_LINK)>
+                    <a
+                        href=(products_url(number, sort, category, search))
+                        class=(PAGE_LINK)
+                    >
                         (number)
                     </a>
                 }
             }
             if current < page_count {
-                <a href=(products_url(current + 1, sort, category)) class=(PAGE_LINK)>
+                <a
+                    href=(products_url(current + 1, sort, category, search))
+                    class=(PAGE_LINK)
+                >
                     "Next"
                 </a>
             } else {

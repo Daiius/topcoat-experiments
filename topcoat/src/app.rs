@@ -5,7 +5,8 @@ use topcoat::{
     Result,
     asset::{Asset, AssetBundle, RouterBuilderAssetExt, asset},
     context::{Cx, app_context},
-    router::{Router, Slot, layout, page},
+    router::{Router, RouterBuilderDiscoverExt, Slot, layout, page},
+    runtime::RouterBuilderRuntimeExt,
     view::{View, view},
 };
 
@@ -20,6 +21,10 @@ pub fn router() -> Router {
     topcoat::router::module_router!()
         .app_context(Catalog::load())
         .assets(AssetBundle::load().expect("asset bundle loads; run `topcoat asset bundle`"))
+        // Registers the shards (and procedures) declared anywhere in the app.
+        .discover()
+        // Layers that should see runtime reruns as plain GETs go above this.
+        .runtime()
         .build()
 }
 
@@ -33,6 +38,9 @@ async fn root_layout(slot: Slot<'_>) -> Result<impl View> {
                 <meta name="viewport" content="width=device-width, initial-scale=1">
                 <title>"Meridian Supply"</title>
                 <link rel="stylesheet" href=(TAILWIND_CSS)>
+                // The browser runtime for shards and live regions. It loads on
+                // every page because the layout is shared.
+                topcoat::runtime::script()
             </head>
             <body class="flex min-h-screen flex-col bg-slate-50 text-slate-900">
                 site_nav()

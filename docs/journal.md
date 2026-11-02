@@ -134,3 +134,57 @@
   bundle が無い環境でも、`Manifest` を手で組み立てて `AssetConfig::hosted_at("https://assets.test", manifest)` を登録すれば
   描画できる（`Asset::id()` が公開されている）。この test helper を `images.rs` に置いた。
 - **所要時間の体感**: 画像スクリプト 15 分、topcoat 側 15 分、テストの asset 回避 10 分。
+
+## 2026-11-03 #3 一覧の検索を `#[shard]` + `signal` で部分再描画する
+
+- **書こうとしたこと**: 一覧ページに検索入力を足す。入力するたびに結果のグリッドだけをサーバーで描き直す。
+- **書き味**
+  - `examples/runtime/src/shard.rs` の形そのまま。ページで `signal(cx, || 初期値)` を作り、
+    `<input :value=$(search.get()) @input=$(|e: Event| search.set(e.target.value))>` で結ぶ。
+    結果側は `#[shard] async fn product_results(cx, search: String, page: usize, sort: Option<String>, category: Option<String>)`
+    に切り出し、`product_results(search: $(search.get()), ...)` で呼ぶだけ。
+    シグナルを読むのは `$()` の中だけなので、ページ全体は再実行されず、shard だけが POST で描き直される。
+  - 初期値はクエリ文字列 `q` から取る。ページ番号は `page: $(if search.get() == initial_search { initial_page } else { 1 })` とした。
+    「クエリが変わったら 1 ページ目に戻す」を、捕捉した初期値との比較で式として書ける。
+  - ソート・カテゴリのチップ、件数、ページングも shard の中に入れた。外に置くと、入力後もリンクが古い `q` のままになるためだ。
+    結果として、シグナルに依存しない見出しと入力欄だけが shard の外に残った。
+  - shard の引数は**すべてユーザー入力**（docs が繰り返し強調している）。shard 内で `normalize_search`（trim、64 文字で切る、空なら None）と
+    `normalize_sort` をかけ直した。
+    パスは `#[shard("/_shards/product-results")]` で固定した。既定では名前とソース位置から生成され、移動すると変わる。
+  - JS が無い場合のために、入力欄を `<form method="get" action="/products">` で包んだ。Enter で普通の GET 遷移になる。
+- **URL との同期**
+  - 式の語彙に URL / History の API は無い。`raw!` で JS を埋め込み、`@input` の中で `history.replaceState` を呼んだ
+    （`q` を設定・削除し、`page` を消す）。push ではなく replace にしたのは、1 文字ごとに履歴が積まれるのを避けるため。
+  - 流儀として「シグナル ↔ URL の同期」は用意されていない。runtime の `link` は文書ごと差し替えるナビゲーション用。
+    サーバー側で URL を正とするなら、`<form method=get>` で遷移させるのが素直。今回は「入力のたびに部分再描画 + replaceState」と、
+    「JS 無しなら GET 遷移」の二段構えにした。
+- **詰まった点: `topcoat fmt` が `raw!` を壊した**
+  - `raw!("…長い JS…")` を `topcoat fmt` にかけた。文字列が長いので複数行に折られ、末尾に `,` が付いた（`raw!(\n "…",\n)`）。
+    その結果、**コンパイルが通らなくなった**。
+
+    ```
+    error: unexpected end of input, expected Rust expression after comma
+      = note: this error originates in the macro `::topcoat::runtime::expr`
+    error: cannot find macro `raw` in this scope
+    error[E0599]: no method named `set` found for struct `topcoat::runtime::Signal<T>`
+    ```
+
+    `raw!` の 2 番目の引数（サーバー側の Rust 版）が省略可能なので、`,` の後に式が来ると解釈された。
+    続く 2 つのエラーは連鎖で、`Signal::set` が無いという無関係な指摘まで出る。初見では原因を `topcoat fmt` に結びつけにくい。
+  - 回避として、Rust 版に `()` を渡した（`raw!("…", ())`）。2 引数の後ろの末尾 `,` は受け付けられ、整形後もコンパイルが通る。
+    イベントハンドラの中はブラウザでしか実行されないので、Rust 版は使われない。
+- **#538（入れ子の shard）**: shard を入れ子にしていないので踏んでいない。
+- **#484（`unsafe-eval`）**: shard の初期描画には、引数が
+  `<!--::topcoat::shard::start("/_shards/product-results", "<id>", ["cx.hydrate(&quot;zzzz&quot;)", …])-->`
+  という**JS 式の文字列**として埋め込まれる。ブラウザはこれを評価する。厳しい CSP を掛けると、この経路から壊れると予想する。
+- **配信される JS**
+  - `topcoat::runtime::script()` は `<script type="module" src="/_topcoat/assets/topcoat-<hash>.js">` を 1 本出す。
+    実体は `topcoat-runtime-0.11.0/browser/dist/index.js` で、**48,582 B（gzip -9: 15,129 B、gzip 既定: 15,155 B、zstd -19: 14,513 B）**。
+    brotli はローカルに無く未計測。実際の転送量は supervisor の計測待ち。
+  - layout に入れたので**全ページ**で読み込まれる（ホームのように runtime を使わないページも含む）。
+    docs の手順も「document head に入れる」だけで、ページ単位で出し分ける方法は書かれていない（内部に hoist はあるが、未文書化）。
+  - 配信は `.runtime()` と `.discover()`（shard や procedure の登録）を router に足すだけで済む。
+- **テスト**: shard も初期描画ではコンポーネントとして呼べる。テストでは明示パスの `#[page]` から固定引数で呼び、
+  件数表示、0 件の文言、チップのリンクに `q` が載ることを確かめた。再描画の POST（`ShardRequest` の JSON と identity ヘッダ）は
+  内部プロトコルなので、単体テストでは叩いていない。
+- **所要時間の体感**: 実装 20 分、fmt 起因のエラーの切り分け 10 分。
