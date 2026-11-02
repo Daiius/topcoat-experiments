@@ -104,24 +104,39 @@ pub fn cart(cx: &Cx) -> CookieStore<Cart, impl Cookies> {
     cookie_store(cookies(cx), "cart").parse_or_default()
 }
 
-/// Loads the signing key from [`KEY_ENV`]. Without it, generates a random
-/// key, which only works for a single instance and resets carts on restart.
+/// Loads the signing key from [`KEY_ENV`].
+///
+/// Debug builds fall back to a random key with a warning; it only works for
+/// a single instance and resets carts on restart. Release builds refuse to
+/// start without the variable, since instances must share one key.
 ///
 /// # Panics
 ///
-/// Panics if the variable is set but is not 128 hex digits.
+/// Panics if the variable is set but is not 128 hex digits, or, in release
+/// builds, if it is not set.
 pub fn signing_key() -> Key {
-    if let Ok(hex) = std::env::var(KEY_ENV) {
-        let bytes =
-            decode_hex(hex.trim()).unwrap_or_else(|| panic!("{KEY_ENV} must be hex-encoded"));
-        Key::try_from(bytes.as_slice())
-            .unwrap_or_else(|error| panic!("{KEY_ENV} is not a usable key: {error}"))
-    } else {
-        eprintln!(
-            "warning: {KEY_ENV} is not set; using a random cookie key. \
-             Carts reset on restart and are not shared between instances."
-        );
-        Key::generate()
+    let value = std::env::var(KEY_ENV).ok();
+    load_key(value.as_deref(), cfg!(debug_assertions)).unwrap_or_else(|error| panic!("{error}"))
+}
+
+fn load_key(value: Option<&str>, allow_random: bool) -> Result<Key, String> {
+    match value {
+        Some(hex) => {
+            let bytes = decode_hex(hex.trim()).ok_or(format!("{KEY_ENV} must be hex-encoded"))?;
+            Key::try_from(bytes.as_slice())
+                .map_err(|error| format!("{KEY_ENV} is not a usable key: {error}"))
+        }
+        None if allow_random => {
+            eprintln!(
+                "warning: {KEY_ENV} is not set; using a random cookie key. \
+                 Carts reset on restart and are not shared between instances."
+            );
+            Ok(Key::generate())
+        }
+        None => Err(format!(
+            "{KEY_ENV} is not set. Release builds need the cookie signing key shared by \
+             every instance: 128 hex digits, e.g. from `openssl rand -hex 64`."
+        )),
     }
 }
 
@@ -183,6 +198,21 @@ mod tests {
     fn the_cookie_value_is_compact() {
         let cart = Cart(vec![(12, 1), (7, 3)]);
         assert_eq!(serde_json::to_string(&cart).unwrap(), "[[12,1],[7,3]]");
+    }
+
+    #[test]
+    fn release_builds_require_the_key() {
+        let error = load_key(None, false).err().unwrap();
+        assert!(error.contains("COOKIE_KEY is not set"), "{error}");
+        assert!(load_key(None, true).is_ok());
+    }
+
+    #[test]
+    fn a_set_key_must_be_valid() {
+        let valid = "ab".repeat(64);
+        assert!(load_key(Some(&valid), false).is_ok());
+        assert!(load_key(Some("not hex"), true).is_err());
+        assert!(load_key(Some(&"ab".repeat(16)), true).is_err());
     }
 
     #[test]

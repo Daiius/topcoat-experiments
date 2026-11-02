@@ -320,3 +320,14 @@
 - **対応**: カートの行は短く、すべてファーストビューに入るので、`eager: true`（`loading="eager"`）にした。
   テストも足した。カートに id 1 と 42 を入れて `/cart` を描画し、両方の `<img>` が期待どおりのファイル名と `loading="eager"` で出ることを確かめる。
 - **所要時間の体感**: 10 分。
+
+## 2026-11-03 #4 release ビルドでは `COOKIE_KEY` を必須にする
+
+- release ビルド（`cfg!(debug_assertions)` が偽）で `COOKIE_KEY` が無い場合、`router()` を組み立てる時点で panic させる。
+  サーバーは listen する前に終了する。メッセージは
+  `COOKIE_KEY is not set. Release builds need the cookie signing key shared by every instance: 128 hex digits, e.g. from openssl rand -hex 64.`。
+  debug ビルドは従来どおり、警告を出して `Key::generate()` を使う。
+- 判定を `load_key(value, allow_random) -> Result<Key, String>` に切り出して、環境変数を触らずにテストできるようにした
+  （Rust 2024 では `std::env::set_var` が `unsafe` で、このクレートは `unsafe_code = "deny"` にしている）。
+- 経緯: マルチインスタンスで鍵がずれると、別のインスタンスが署名した cookie は「改ざん」扱いになり、**カートが黙って空になる**。
+  エラーにならないので気づきにくい。そのため、起動時に落とす方が安全と判断した。
