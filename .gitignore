@@ -1,0 +1,9 @@
+# Rust
+target/
+# Node
+node_modules/
+.next/
+.vercel/
+# Claude worktrees
+.claude/worktrees/
+.env*
