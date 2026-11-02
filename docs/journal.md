@@ -711,3 +711,48 @@
   逆に、`srcset` のための URL 解決が `view!` の外に出ることは、`asset!` の設計（URL は描画時に `Cx` から解決）から来る小さな段差だった。
 - **所要時間の体感**: 画像スクリプト 5 分、`asset!` の実装を読んでマクロ化 10 分、コンポーネントと呼び出し側 10 分、テスト 10 分、記録 15 分。
   記録を除けば約 35 分。Next.js 版の画像対応（30 分）とほぼ同じだが、その半分以上は「最適化の部品を自作する」作業だった。
+
+## 2026-11-03 [Next.js][実験] #4 ヘッダーのカート件数を Client Component に移し、動的な穴を外す
+
+- **書こうとしたこと**: ローカル docker 計測（article-notes 7 節）で、Next の `/` は 95 RPS（p99 789ms）、topcoat は 5,677 RPS だった。
+  Next は、ヘッダーのカート件数（`cookies()` + `<Suspense>`）のために全ページが ◐ になり、自前ホストでは毎回 resume 描画が走っていると推定した。
+  **「動的な穴 1 つ」の CPU コスト**を測るため、件数をサーバーで読まない形に変える（D33）。ブランチは `exp/nextjs-static-header`。
+- **やったこと**
+  - `writeCart`（Server Action からだけ呼ばれる）で、本体の `cart`（HttpOnly のまま）に加えて、
+    **表示用の `cart_count`**（`HttpOnly` なし、`SameSite=Lax` / `Secure` / `Path=/`）にも件数を書くようにした。
+  - ヘッダーの件数を Client Component `CartCount`（`src/components/cart-count.tsx`）にした。
+    `useSyncExternalStore` で `document.cookie` から読み、Cookie Store API の `change` イベントで読み直す。
+    Server Action の応答が cookie を書き換えると、その場で件数が変わる。
+  - cookie 名とパーサは `src/lib/cart-count.ts` に分けた。`lib/cart.ts` は `next/headers` を import しているので、Client Component から読めない。
+    また、`'use client'` のファイルから定数を export すると、サーバー側では client reference になってしまう。そのため、指示子の無い第 3 のファイルが要った。
+  - `site-nav.tsx` から `<Suspense>` と `cookies()` が消え、レイアウトは request データに一切触らなくなった。
+- **ちらつきの扱い**: `useSyncExternalStore` の `getServerSnapshot` で `null` を返し、そのときは件数なしの「Cart」を描く。
+  これは旧版の Suspense fallback と同じ文字列なので、**静的 HTML は旧版のシェルと同じ見た目**になる。
+  hydration の直後に「Cart (3)」に変わる。「Cart (0)」を先に出してから正しい数に変わる、という誤表示は起きない。
+  hydration 時の不一致エラーも出ない（サーバー値で hydration してから、クライアント値で再描画するのが `useSyncExternalStore` の仕様）。
+  旧版では件数が同じ HTML ストリームの中で届いていたので、**件数が見えるまでの時間は「サーバーの差し込み」から「JS の読み込み + hydration」に延びる**。
+  JS なしでは、ずっと「Cart」のままになる（カートの操作自体は JS なしでも動く）。
+- **手間（定量）**: `git diff --stat`（コード）は 4 ファイルで +80 / −30。新規は `cart-count.tsx`（46 行）と `cart-count.ts`（20 行）、
+  `cart.ts` は +10 / −7、`site-nav.tsx` は +4 / −23。所要は実装 15 分ほど。設計の判断（どの cookie に何を置くか、ちらつき、client reference の罠）の方が時間を使った。
+- **トレードオフ**
+  - **HttpOnly でない cookie**: 件数（整数）だけなので、XSS で漏れても失うものは小さい。ただし「カートを HttpOnly で守る」という D26 の理由は、件数の分だけ弱まる。
+    また、cookie は全リクエストに載るので、上りが十数バイト増える。
+  - **件数の二重管理**: 本体と件数は `writeCart` の 1 か所でしか書かないが、それでも次の場合にずれる。
+    (1) この変更より前から `cart` を持つ訪問者は、次にカートを更新するまで「Cart (0)」。
+    (2) カタログから商品が消えると、本体の読み取り時に捨てられる行が、件数には残る。
+    (3) 訪問者が `cart_count` を書き換えられる（表示が変わるだけで、カートの中身と価格には影響しない）。
+    Server Component は cookie を書けないので、`/cart` の描画時に件数を直すことはできない。直すなら Server Action か Route Handler、または middleware（proxy）が要る。
+  - **Cookie Store API の無いブラウザ**: `change` を購読できないので、Server Action の後に件数が変わるかは、ヘッダーが再描画されるかどうかに依存する（未検証）。
+    Add to cart は `/cart` へ redirect するので、その経路の確認が要る。
+- **各ページの予想（`next build` の表示）**
+  - `/`: **○ Static**。レイアウトは request データに触らなくなり、ページは `'use cache'` の `getFeatured` だけを読む。`cookies()` / `headers()` / `connection()` / `searchParams` はどこにも無い。
+  - `/products`: ◐。`searchParams` を待つ 2 つの穴（`SearchFormForQuery`、`ProductResults`）が残る。
+  - `/products/[id]`（500 件）: ◐。`connection()` を待つ 2 つの穴（在庫 `LiveStock`、レビュー `Reviews`）が残る。prerender されていない id は、`ProductDetail` 全体が穴になる。
+  - `/cart`: ◐。`CartContents` が `cookies()` を読む（意図どおり）。
+  - `/api/stock/[id]`: ƒ（変化なし）。
+- **計測で見たいこと（予想）**: `/` は prerender 済みの HTML をそのまま返すだけになるので、RPS は桁で上がるはず。
+  `/products` と `/products/1` は穴が 1 つ減るだけなので、差が小さければ「resume 描画そのもの」が重いことになる（穴の数ではなく、穴が 1 つでもあるかどうか）。
+  応答ヘッダでは、`/` の `x-nextjs-postponed` が消え、`Cache-Control` が `s-maxage` 付きになる見込み。
+- **注記: Vercel では結論が変わりうる。** Vercel では、◐ のページでも静的シェルはエッジから返り、関数は穴の部分だけを描く。
+  自前ホスト（`next start`）では、シェルの送出も resume も同じ Node プロセスの 1 CPU で行うので、穴 1 つのコストがそのまま RPS に出る。
+  「動的な穴を外すと速くなる」は自前ホストの結論であり、Vercel ではまず TTFB（シェル）は変わらず、関数の起動回数と課金に効く、という形で現れるはず → デプロイ時に確認。
