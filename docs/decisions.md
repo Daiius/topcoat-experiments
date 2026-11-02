@@ -33,3 +33,5 @@
 | D26 | 11-03 | 自律 | Next.js ヘッダーのカート件数は `cookies()` + Suspense のまま（全ページに動的な穴が開く） | HttpOnly を保てる。Client 読みの代案は記事で触れる |
 | D27 | 11-03 | 自律 | Next.js 版を supervisor 検証のうえ main へ仮 merge | スクショは `scratchpad/shots/next/` |
 | D28 | 11-03 | 自律 | 負荷計測ツールは oha（`cargo install oha`）。公式ベンチと同じツール | k6/oha 未導入。公式 bench.sh と揃える |
+| D29 | 11-03 | 自律 | topcoat イメージの既定 `PORT=80`（Vercel 公式 Rust ガイドに合わせる。nonroot でも Docker 20.10+ は bind 可）。計測は compose で 8080 | Vercel は既定で 80 番へ転送 |
+| D30 | 11-03 | 自律 | `bench/results/` は gitignore、記事で引用する回の summary だけ `git add -f` | 結果ディレクトリの肥大を避ける |
