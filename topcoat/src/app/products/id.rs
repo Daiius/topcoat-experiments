@@ -2,7 +2,8 @@ use topcoat::{
     Result,
     context::{Cx, app_context},
     router::{error::RouterErrorExt, href, module_param, page, path_param},
-    view::{View, component, suspense, view},
+    runtime::{connected, shard},
+    view::{View, component, emit, live, suspense, view},
 };
 
 use crate::{
@@ -13,6 +14,7 @@ use crate::{
     cart::MAX_QUANTITY,
     catalog::{Catalog, format_rating},
     remote::{fetch_related, fetch_reviews},
+    stock::{LOW_STOCK, stock_at, until_next_change},
 };
 
 module_param!(product_id: u32, error = not_found);
@@ -52,6 +54,7 @@ async fn product_detail(cx: &Cx) -> Result<impl View> {
                     </span>
                 </div>
                 <p class="mt-6 text-4xl font-bold">(product.price())</p>
+                stock_level(product_id: product.id)
                 <div class="mt-6 space-y-4 text-slate-600">
                     for paragraph in &product.description {
                         <p>(paragraph)</p>
@@ -106,6 +109,46 @@ async fn product_detail(cx: &Cx) -> Result<impl View> {
                 related(product_id: product.id)
             )
         </section>
+    })
+}
+
+/// The live stock level. The page's HTTP response carries the current level
+/// and finishes; `connected` then has the browser open a WebSocket and run
+/// this shard again, and that run keeps emitting a fresh level every
+/// interval. Only the shard reconnects, not the whole page.
+#[shard("/_shards/stock-level")]
+async fn stock_level(cx: &Cx, product_id: u32) -> Result<impl View> {
+    // The ID comes back from the browser on reconnect: check it.
+    let known = app_context::<Catalog>(cx).get(product_id).is_some();
+    Ok(live! {
+        loop {
+            let now = std::time::SystemTime::now();
+            let level = stock_at(product_id, now);
+            let token = emit! {
+                if !known {
+
+                } else if level == 0 {
+                    <p class="mt-3 text-sm font-semibold text-rose-600">
+                        "Out of stock"
+                    </p>
+                } else if level <= LOW_STOCK {
+                    <p class="mt-3 text-sm font-semibold text-amber-600">
+                        "Only "
+                        (level)
+                        " left in stock"
+                    </p>
+                } else {
+                    <p class="mt-3 text-sm font-medium text-emerald-700">
+                        (level)
+                        " in stock"
+                    </p>
+                }
+            }?;
+            if !known || !connected(cx) {
+                break Ok(token);
+            }
+            tokio::time::sleep(until_next_change(now)).await;
+        }
     })
 }
 

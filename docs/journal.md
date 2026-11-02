@@ -231,3 +231,40 @@
   追加 → 追加 → 数量変更 → 削除を cookie を受け渡しながら通すテスト、改ざんした cookie が空カートになるテスト、
   存在しない商品が 404 になるテストを足した。
 - **所要時間の体感**: 実装 25 分、end-to-end テストの土台作り 15 分。
+
+## 2026-11-03 #5 在庫数を `live!` + `emit!` + `connected()` で live 更新する
+
+- **書こうとしたこと**: 詳細ページに在庫数を出し、5 秒ごとに更新する。値は時刻と商品 id から決定的に計算し、インスタンス間で揃える。
+- **書き味**
+  - 値は `src/stock.rs` の `stock_at(id, SystemTime)` で決める。5 秒スロットの番号と id を SplitMix64 で混ぜた純関数にした。
+    broadcast も Mutex も持たない。時計が揃っていれば、どのインスタンスでも同じ瞬間に同じ値になる。
+    待ち時間は「次のスロット境界まで」（`until_next_change`）なので、全クライアントが同じ境界で一斉に切り替わる。
+  - `examples/live/src/chat.rs` の形をそのまま使った。`#[shard]` の中で `live! { loop { let token = emit!{…}?; if !connected(cx) { break Ok(token) } sleep… } }`。
+    chat の `changed.recv().await` が `tokio::time::sleep(until_next_change(now))` に置き換わっただけ。
+  - **page ではなく shard にした**。`connected()` は「囲んでいる page か shard」を接続付きで描き直させる。
+    page の中で呼ぶと、再接続のたびに詳細ページ全体（800ms の関連商品を含む）が描き直される。
+    shard（`#[shard("/_shards/stock-level")] async fn stock_level(cx, product_id: u32)`）なら、在庫の段落だけが接続付きで走る。
+  - shard の引数 `product_id` はブラウザから戻ってくるので、存在確認してから使う（未知の id なら何も出さず、接続も要求しない）。
+  - HTTP 描画では 1 回だけ emit して終わる。テスト（`tokio::time::pause`）で、応答が 5 秒の待ちを含まずに完了することを確かめた。
+    HTML には `<!--::topcoat::shard::start("/_shards/stock-level", …)-->` の直後に `<!--::topcoat::connect-->` が入り、
+    これがブラウザへの接続要求になる。
+  - 一発で書けてコンパイルも通った。ただ、`emit!` の中に空の `if !known { }` 分岐を書けるかは試すまで分からなかった（書けた）。
+- **transport（ソースで確認）: SSE ではなく WebSocket**
+  - `docs/view/live.md` の記述は "Updates travel over the HTTP response, or over a WebSocket when the page or shard requests a connection"。
+    `connected()` を使う長時間の更新は **WebSocket** で流れる。AGENTS.md の機能一覧にある「`live!` / SSE」は、topcoat については正確ではなかった。
+  - 仕組み（`topcoat-runtime-0.11.0/src/layer.rs`、`src/layer/socket.rs`、`browser/src/render/connection.ts`）
+    - ブラウザは**文書 1 つにつき WebSocket を 1 本**開く。開く先は**ページ自身の URL**で、`Sec-WebSocket-Protocol: topcoat-runtime` を付ける
+      （`ws(s)://<host>/products/1`）。`.runtime()` が足す `RuntimeLayer` がこれを受ける。
+    - 接続上では、`{run, method:"POST", path:"/_shards/stock-level", headers, body}` の JSON で「接続付き描画」を依頼する。
+      サーバーは run ID 付きのフレームで、出力を流し続ける。cookie や Origin はハンドシェイクのものが使われ、run 側からは変えられない。
+    - 1 接続あたりの同時 run は既定で 64（`.max_runs_per_connection(n)`）。超えると 429。
+    - アプリ層の ping / heartbeat は無い（在庫は 5 秒ごとにフレームが流れるので、アイドル切断は起きにくいはず）。
+  - **切断時の挙動**: サーバーは run ごと捨てる。ブラウザは `close` を受けると、**1 秒から倍々で最大 30 秒の指数バックオフ**で再接続する。
+    つながると、各メンバー（shard）を**先頭から**走らせ直し、最新の値を 1 回 emit してから待ちに戻る。
+    状態を持たない設計なので、再接続で値が飛んだりずれたりしない。ページから離れてメンバーがいなくなると、ソケットは閉じる。
+  - **Vercel での判断材料**: 必要なのは「長時間の SSE」ではなく、**コンテナ上での WebSocket の Upgrade と、その長時間保持**。
+    使えない場合の退避案は 2 つ考えられる。ただし、どちらを採るかは未決。
+    1. `connected()` を使わず、`live!` の loop を HTTP 応答のまま流し続ける。チャンク化された HTML を延々返す形で、事実上の SSE 相当になる。
+       docs は「無期限の待ちは接続チェックの後ろに置け」としており、流儀からは外れる。
+    2. `sse` feature + 自前の route で、JSON を polling / SSE する。
+- **所要時間の体感**: 実装 15 分、transport の読み込み 15 分。

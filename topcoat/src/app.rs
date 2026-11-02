@@ -248,6 +248,34 @@ mod tests {
         assert!(cookie.is_none());
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn the_detail_page_shows_the_current_stock_and_finishes() {
+        let router = test_router();
+        let before = crate::stock::stock_at(1, std::time::SystemTime::now());
+        // The HTTP render emits once and ends; it must not wait for the
+        // next interval (with paused time, a wait would surface as a jump).
+        let started = tokio::time::Instant::now();
+        let html = get(&router, "/products/1", None).await;
+        let after = crate::stock::stock_at(1, std::time::SystemTime::now());
+        assert!(started.elapsed() < crate::stock::STOCK_INTERVAL);
+        assert!(
+            html.contains("::topcoat::shard::start(\"/_shards/stock-level\""),
+            "{html}"
+        );
+        // The shard asks the browser for a connected (WebSocket) render.
+        assert!(html.contains("<!--::topcoat::connect-->"), "{html}");
+        let shown = |level| match level {
+            0 => "Out of stock".to_owned(),
+            level if level <= crate::stock::LOW_STOCK => format!("Only {level} left in stock"),
+            level => format!("{level} in stock"),
+        };
+        // A slot boundary may pass during the request.
+        assert!(
+            html.contains(&shown(before)) || html.contains(&shown(after)),
+            "{html}"
+        );
+    }
+
     #[tokio::test]
     async fn the_products_page_renders_the_search_shard_and_runtime() {
         let router = test_router();
