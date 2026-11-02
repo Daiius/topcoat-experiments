@@ -7,6 +7,7 @@
 // and prices always come from the catalog, never from the cookie.
 import { cookies } from "next/headers";
 
+import { COUNT_COOKIE } from "./cart-count";
 import { type Product, isProductId, lookupProducts } from "./catalog";
 
 /** Most units of one product a cart line can hold. */
@@ -60,14 +61,16 @@ export async function readCart(): Promise<Cart> {
   return parse((await cookies()).get(COOKIE)?.value);
 }
 
-/** Replaces the cart cookie. Only callable from a Server Action or Route Handler. */
+/**
+ * Replaces the cart cookie, and the readable count the header shows (so no
+ * page has to read the cart on the server just for the header). Only
+ * callable from a Server Action or Route Handler.
+ */
 export async function writeCart(cart: Cart): Promise<void> {
-  (await cookies()).set(COOKIE, JSON.stringify(cart), {
-    path: "/",
-    httpOnly: true,
-    sameSite: "lax",
-    secure: true,
-  });
+  const jar = await cookies();
+  const options = { path: "/", sameSite: "lax", secure: true } as const;
+  jar.set(COOKIE, JSON.stringify(cart), { ...options, httpOnly: true });
+  jar.set(COUNT_COOKIE, String(countItems(cart)), { ...options, httpOnly: false });
 }
 
 /** Total units across all lines, as shown in the header. */
