@@ -404,3 +404,30 @@
     そうすると ISR がバックグラウンドで再生成し、そのリクエストだけ 800ms を払う。topcoat には、リクエストを跨いでキャッシュする仕組みが無い。
   - レビューの差し込み自体には自前の Client JS は要らない（RSC のストリーム）。ただし React の runtime は全ページに載っている。
 - **所要時間の体感**: 実装 10 分、`setTimeout` の扱いを docs で探して 10 分。
+
+## 2026-11-03 [Next.js] #3 一覧の検索を `next/form` の GET + `searchParams` で書く
+
+- **書こうとしたこと**: 一覧に検索欄を足す。AGENTS.md の方針どおり、`next/form` の `<Form action="/products">`（GET）と、
+  Server Component が読む `searchParams` だけで作る。自前の Client Component は書かない。
+- **書き味**
+  - `<Form action="/products">` に hidden の `sort` / `category` と `q` の入力欄を入れるだけ。JS が無ければ普通の GET フォームで、
+    JS があればクライアント遷移になる（docs `form.md`）。topcoat 版で `raw!` と `history.replaceState` を使って手で書いた「URL との同期」は、
+    **そもそも URL が正なので要らない。** 検索結果のリンク（チップ、ページング）に `q` を載せる部分は、`productsUrl` に引数を 1 つ足しただけ。
+  - 入力の正規化（trim、64 文字で切る、空なら無し）は `topcoat/src/urls.rs` の `normalize_search` を移植した。
+    Rust の `chars().take(64)` に合わせ、`Array.from` でコードポイント単位に切っている。
+    `q` の percent-encode も `encode_query_value` に合わせ、`encodeURIComponent` が残す `!'()*` を追加でエンコードした。topcoat 版と URL が一致する。
+  - **検索欄の初期値も URL 依存なので、境界の中に置く必要があった。** 見出しの行に `<Suspense fallback={空の SearchForm}>` を置き、
+    中で `searchParams` を await して値入りの `SearchForm` を返す。結果側の `<Suspense>` と合わせ、同じ Promise を 2 か所で await している。
+    静的シェルには空の検索欄が入る。差し替えまでの間に入力した文字は、差し替えで消える（ストリームは速いので実害は小さいはず）。
+  - `cacheComponents` 有効時は、遷移後も前のルートが `<Activity>` で保持される。`defaultValue` だけだと、`?q=a` から `?q=b` へ遷移しても
+    入力欄が古い値のまま残りうる。そこで、input に `key={search}` を付けて作り直させた。docs によれば `<Form>` 自体に `key` は渡せない。
+- **topcoat との差（挙動）**
+  - topcoat は**1 文字ごとに** shard を POST で描き直す。Next は **Enter で確定**して遷移する。逐次検索にするなら、
+    Client Component で `useRouter().replace` を debounce して呼ぶことになる。その分 JS が増え、流儀としては一段複雑になる。今回は採らなかった。
+  - 結果は `getProductsPage(page, sort, category, search)`（`'use cache'`）が返す。同じ検索語の 2 回目は、インスタンスのメモリから返る。
+    `partialPrefetching` 下では `<Form>` の prefetch は App Shell（見出しと空の検索欄）だけで、結果は遷移後に取りに行く見込み。
+- **気づき（配信されるもの・予想）**
+  - `next/form` は `'use client'` の部品（`next/dist/client/form.js`）なので、その分の Client JS が一覧ページに載る。
+    自前の JS はゼロ。topcoat は runtime JS（gzip 約 15KB）と、shard の引数として埋め込まれる JS 式を配る。
+  - 検索結果は毎回リクエスト時のストリームになる（`searchParams` 依存）。0 件時は「0 products matching “…”」と「No products found.」を出す。文言は topcoat と同じ。
+- **所要時間の体感**: 実装 15 分。topcoat 版で詰まった URL 同期と JS の式検査が、丸ごと不要だった。
