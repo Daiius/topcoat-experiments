@@ -7,7 +7,7 @@
 # Hobby CLI uploads are capped at 100 MB, so build output must stay out.
 #
 # Needed by the builds:
-#   topcoat (Container Runtime): Dockerfile, data/, topcoat/
+#   topcoat (Container Runtime): Dockerfile only (it refers to the ghcr.io image)
 #   nextjs (Root Directory nextjs/): nextjs/, ../data (copied by
 #   nextjs/scripts/copy-data.mjs)
 

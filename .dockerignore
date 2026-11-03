@@ -1,5 +1,5 @@
 # Shared by both builds (context = repository root):
-#   docker build .                        -> Dockerfile (topcoat, also Vercel)
+#   docker build -f topcoat.Dockerfile .  -> topcoat
 #   docker build -f nextjs/Dockerfile .   -> Next.js
 # Each Dockerfile COPYs only the paths it needs; this file keeps the context
 # small and keeps host build output and secrets out of it.

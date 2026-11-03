@@ -190,3 +190,18 @@ Container（topcoat、イメージ 18.5 MiB）と Node 関数（Next）で差が
 - 制限一覧: https://vercel.com/docs/limits
 - Instant Rollback: https://vercel.com/docs/instant-rollback
 - Container Registry の上限: https://vercel.com/docs/container-registry/limits-and-pricing
+
+## 追記（2026-11-03）: topcoat は GitHub Actions でビルドしてから Vercel に出す（D40）
+
+Vercel の Container ビルドはキャッシュが効かず毎回 10 分かかったため（journal）、topcoat の流れを変えた。Next.js は Git 連携のまま。
+
+| 段 | どこで | 中身 |
+|---|---|---|
+| 1. イメージ | GitHub Actions（`.github/workflows/topcoat.yml`） | `topcoat.Dockerfile` を buildx でビルド。レイヤーを GitHub Actions のキャッシュに保存（`type=gha`, `mode=max`）。`ghcr.io/daiius/topcoat-experiments-topcoat:{sha,latest}` に push |
+| 2. 起動確認 | 同上 | push したイメージを起動し、5 ルートの status を確かめる |
+| 3. デプロイ | 同上 | ルートの `Dockerfile` を `FROM <image>@<digest>` に書き換え（コミットはしない）、`vercel deploy --prod` |
+
+- **Vercel の topcoat プロジェクトは Git 連携を切る**（Settings > Git > Disconnect）。つないだままだと、push のたびに Vercel 側でも `FROM …:latest` のデプロイが走り、Actions の push 前の古いイメージを出してしまう（最後は Actions のデプロイで上書きされるが無駄）。
+- 必要な設定は `scripts/setup-gha-vercel.sh`（Variables）と、`gh secret set VERCEL_TOKEN`（Secret、手で入れる）。
+- ghcr のパッケージは Vercel から認証なしで pull できるよう public にする（初回の push 後にパッケージ設定で確認）。
+- ローカルや VPS 向けのビルドは `scripts/image-topcoat.sh`（`topcoat.Dockerfile` を使う）。

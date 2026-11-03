@@ -25,7 +25,7 @@ services:
     container_name: bench-topcoat
     build:
       context: ..
-      dockerfile: Dockerfile
+      dockerfile: topcoat.Dockerfile
     environment:
       PORT: "8080"
       COOKIE_KEY: ${COOKIE_KEY:?set COOKIE_KEY, e.g. export COOKIE_KEY="$(openssl rand -hex 64)"}

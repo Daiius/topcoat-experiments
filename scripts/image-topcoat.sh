@@ -28,8 +28,8 @@ esac
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 REV="$(git rev-parse --short HEAD)"
-# Dockerfile が読むもの（.dockerignore で絞った後）: Dockerfile, data/, topcoat/
-DIRTY="$(git status --porcelain -- Dockerfile .dockerignore data topcoat | grep -v '^??' || true)"
+# ビルドが読むもの（.dockerignore で絞った後）: topcoat.Dockerfile, data/, topcoat/
+DIRTY="$(git status --porcelain -- topcoat.Dockerfile .dockerignore data topcoat | grep -v '^??' || true)"
 REGISTRY="${IMAGE%%/*}"
 
 echo "image:    $IMAGE:$REV（と :latest）"
@@ -55,6 +55,7 @@ docker buildx build \
   --load \
   --label "org.opencontainers.image.source=https://github.com/Daiius/topcoat-experiments" \
   --label "org.opencontainers.image.revision=$(git rev-parse HEAD)" \
+  -f topcoat.Dockerfile \
   -t "$IMAGE:$REV" -t "$IMAGE:latest" \
   .
 echo "build: $(( $(date +%s) - start ))s"
