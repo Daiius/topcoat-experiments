@@ -56,6 +56,9 @@ async fn product_detail(cx: &Cx) -> Result<impl View> {
                 </div>
                 <p class="mt-6 text-4xl font-bold">(product.price())</p>
                 stock_level(product_id: product.id)
+                <p class="mt-1 text-xs text-slate-400">
+                    "Demo stock: simulated from the clock, changes every 5 seconds"
+                </p>
                 <div class="mt-6 space-y-4 text-slate-600">
                     for paragraph in &product.description {
                         <p>(paragraph)</p>

@@ -72,6 +72,9 @@ async function ProductDetail({ params }: Pick<PageProps<"/products/[id]">, "para
           <Suspense fallback={<p className="mt-3 h-5 w-24 animate-pulse rounded bg-slate-100" />}>
             <LiveStock productId={product.id} />
           </Suspense>
+          <p className="mt-1 text-xs text-slate-400">
+            Demo stock: simulated from the clock, changes every 5 seconds
+          </p>
           <div className="mt-6 space-y-4 text-slate-600">
             {product.description.map((paragraph, index) => (
               <p key={index}>{paragraph}</p>
