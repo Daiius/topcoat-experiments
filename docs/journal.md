@@ -781,7 +781,7 @@
 ## 2026-11-03 [Vercel][topcoat] COOKIE_KEY の形式違いで全リクエストが 500
 
 - ダッシュボードで手入力した `COOKIE_KEY` が 128 桁の hex でなく、起動時に `COOKIE_KEY must be hex-encoded` で panic（`src/cart.rs` の `signing_key`）。Container Runtime はリクエストのたびにコンテナを起動し直し、毎回 `Application exited with code 101.` → 500。
-- 設計どおりの fail-fast（不正な鍵で黙って動かない）だが、Vercel ではデプロイ自体は成功扱いで、最初のリクエストまで気づけない。`scripts/vercel-cookie-key.sh` で鍵を生成して stdin で登録し直す。
+- 設計どおりの fail-fast（不正な鍵で黙って動かない）だが、Vercel ではデプロイ自体は成功扱いで、最初のリクエストまで気づけない。鍵を `od -An -tx1 -N64 /dev/urandom | tr -d ' \n'` などで 128 桁の hex として作り直し、登録し直す。
 
 ## 2026-11-03 [Vercel][topcoat] Container のビルドは buildah で、前回のキャッシュが効かない
 

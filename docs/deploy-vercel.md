@@ -207,5 +207,5 @@ Vercel の Container ビルドはキャッシュが効かず毎回 10 分かか�
 - 手元から出すときも同じ: `vercel pull --yes --environment=production && vercel build --prod && vercel deploy --prebuilt --prod`（`VERCEL_ORG_ID` / `VERCEL_PROJECT_ID` を指定）。
 
 - **Vercel の topcoat プロジェクトは Git 連携を切る**（Settings > Git > Disconnect）。つないだままだと、push のたびに Vercel 側でも `FROM …:latest` のデプロイが走り、Actions の push 前の古いイメージを出してしまう（最後は Actions のデプロイで上書きされるが無駄）。
-- 必要な設定は `scripts/setup-gha-vercel.sh`（Variables）と、`gh secret set VERCEL_TOKEN`（Secret、手で入れる）。
+- 必要な設定は Repository の Variables `VERCEL_ORG_ID` / `VERCEL_PROJECT_ID`（`.vercel/project.json` の `orgId` / `projectId`）と、Secret `VERCEL_TOKEN`。どれも手で入れる。
 - ローカルや VPS 向けのビルドは `scripts/image-topcoat.sh`（`topcoat.Dockerfile` を使う）。
