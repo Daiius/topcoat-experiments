@@ -897,3 +897,16 @@ topcoat の `<a>` は普通のリンクで、遷移のたびに HTML を丸ご�
 - 0.11.0 の `topcoat::runtime::link` で、ページ全体を読み直さない遷移と先読み（`Never` / `Intent` 既定 / `Viewport`）が使える（`topcoat-runtime-0.11.0/src/link.rs`）。この実装は公式ベンチ由来の素の `<a>` のままで、使っていなかった。
 - 上の計測・評価にある「topcoat は毎回フルロード」「遷移は Next.js が有利」は**この実装での話**。フレームワーク同士の比較にするには、topcoat 版を `link` に置き換えて測り直す。
 - README の Roadmap には Static export、Pre-rendering for static pages、Image optimization / resizing がある。「topcoat に static な性質が無い」は現時点の事実だが、設計として拒んでいるわけではない（`docs/code-comparison.md` の見直し節）。
+
+## 2026-11-04 [topcoat] アプリ内リンクを `topcoat::runtime::link` に置き換える（クライアント遷移 + 先読み）
+
+- **何を書こうとしたか**: 公式ベンチ由来の素の `<a>` を、0.11.0 の `link`（自前の `<a>` には `link_attrs` を展開）に置き換える。先読みは既定の `Intent`（ホバー 80ms かフォーカス）。フォーム送信は対象外。
+- **書き味**: ヘッダー・フッター・パンくず・ページング・ソート/カテゴリ・カート内のリンクを `link(href: …, …)` に替えるだけ。ブロック要素を含む商品カードは `(link_attrs(cx, href, prefetch_mode(cx)))` を `<a>` に展開（docs/link.md の Custom Anchors の例そのもの）。JS が無ければ普通のリンクとして動く。
+- **動作（dev、ブラウザで確認）**: ホバーで `x-topcoat-runtime` 付きの POST が 1 本出て、クリック時は追加の通信なし・ドキュメントの読み直しなし（商品名 31ms）。在庫の WebSocket は遷移で閉じてつなぎ直し、更新は続く。戻るでスクロール位置が復元される（636px → 636px）。
+- **踏んだこと: 遷移すると検索語が残る**
+  - `/products` で検索欄に入力したあと、`q` の無い `/products`（ヘッダーの Products など）へ遷移すると、URL は `/products` なのに前の検索語で絞り込まれた結果が出た。
+  - 仕様どおりの挙動だった。docs/link.md の Navigation Behavior に "Signals declared on both pages keep their values. This lets shared components retain state across navigation." とある。runtime は遷移時に今のページの signal の値をサーバーへ送り、`signal()` は同じ識別子（`cx` + 呼び出し位置）の値があれば初期値より優先する。
+  - 引き継ぎを切る設定や、URL を状態の正とする場合の書き方は docs に無い。回避策として、検索の signal を `cx.keyed(<描画ごとのランダムな値>)` で作り、毎回別の signal にした（`topcoat/src/app/products.rs`）。代償は HTML が決定的でなくなることと、遷移直後に検索結果の shard を取り直すリクエストが 1 本余分に出ること。検索語を鍵にする案は「`q` なし → 入力 → `q` なしのリンク」で同じ鍵になり直らない。
+  - 記事の論点: 「signal を引き継ぐ仕様」と「URL を状態の正とする設計」の衝突。Next.js は検索語を URL だけで持つので起きない。近い既知の不具合に #542（ページ関数で `signal()` を作るページへの `link` 遷移が、黙ってドキュメント全体の読み込みに落ちる）があるが、今回の一覧への遷移では起きていない。
+- **先読みの性質の違い**: topcoat の先読みはサーバーでページを最後まで描画する（関連商品の 800ms も走る。同時 2 件・保持 8 件 30 秒・データ節約設定では行わない）。Next.js は URL に依存しない静的シェルだけを先読みする。
+- 所要: subagent の実装・調査 約 7 分 + 確認 15 分ほど。
