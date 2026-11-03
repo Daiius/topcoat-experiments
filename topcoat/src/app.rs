@@ -8,8 +8,8 @@ use topcoat::{
     context::{Cx, app_context},
     cookie::{Key, RouterBuilderCookieExt},
     router::{Router, RouterBuilderDiscoverExt, Slot, layout, page},
-    runtime::RouterBuilderRuntimeExt,
-    view::{View, view},
+    runtime::{RouterBuilderRuntimeExt, link},
+    view::{View, attributes, view},
 };
 
 use crate::{
@@ -76,22 +76,24 @@ async fn home(cx: &Cx) -> Result<impl View> {
             <p class="mt-4 max-w-xl text-lg text-indigo-100">
                 "Five hundred products, zero filler. Everything in the catalog is tested daily by the people who build it."
             </p>
-            <a
-                href="/products"
-                class="mt-8 inline-block rounded-lg bg-white px-6 py-3 text-sm font-semibold text-indigo-700 hover:bg-indigo-50"
-            >
+            link(
+                href: "/products",
+                attrs: attributes! {
+                    class="mt-8 inline-block rounded-lg bg-white px-6 py-3 text-sm font-semibold text-indigo-700 hover:bg-indigo-50"
+                },
                 "Browse all products"
-            </a>
+            )
         </section>
         <section class="mt-12">
             <div class="flex items-baseline justify-between">
                 <h2 class="text-2xl font-bold tracking-tight">"Featured products"</h2>
-                <a
-                    href="/products"
-                    class="text-sm font-medium text-indigo-600 hover:text-indigo-500"
-                >
+                link(
+                    href: "/products",
+                    attrs: attributes! {
+                        class="text-sm font-medium text-indigo-600 hover:text-indigo-500"
+                    },
                     "View all"
-                </a>
+                )
             </div>
             <div class="mt-6 grid grid-cols-2 gap-6 md:grid-cols-3 lg:grid-cols-4">
                 for product in app_context::<Catalog>(cx).featured() {
@@ -424,6 +426,64 @@ mod tests {
                 );
             }
             assert_compiles_as_javascript(page, &expressions);
+        }
+    }
+
+    /// Runtime navigation posts the current page's signal values to the
+    /// destination (`navigation.ts` / `page.ts` `signalBody`). The search
+    /// signal mirrors `q`, so a link without `q` (header "Products", footer
+    /// categories) must not inherit the query typed on the previous page.
+    #[tokio::test]
+    async fn runtime_navigation_does_not_carry_the_search_to_a_url_without_it() {
+        let router = test_router();
+        let html = get(&router, "/products?q=lamp", None).await;
+        let marker = "::topcoat::signal({&quot;t&quot;:&quot;signal&quot;,&quot;id&quot;:&quot;";
+        let at = html.find(marker).expect("the search signal is declared") + marker.len();
+        let id: String = html[at..]
+            .chars()
+            .take_while(char::is_ascii_hexdigit)
+            .collect();
+        assert_eq!(id.len(), 32, "{html}");
+
+        // What the runtime sends when following a link from that page.
+        let navigate = |path: &str| {
+            Request::builder()
+                .method("POST")
+                .uri(path)
+                .header(CONTENT_TYPE, "application/json")
+                .header("x-topcoat-runtime", "true")
+                .body(Body::from(format!(r#"{{"signals":{{"{id}":"lamp"}}}}"#)))
+                .unwrap()
+        };
+        let (response, html) = send(&router, navigate("/products")).await;
+        assert_eq!(response.status(), StatusCode::OK, "{html}");
+        assert!(html.contains("500 products"), "{html}");
+        assert!(!html.contains("matching"), "{html}");
+
+        // A link that carries the query still shows its results.
+        let (_, html) = send(&router, navigate("/products?category=audio&q=pro")).await;
+        assert!(html.contains("matching \u{201c}pro\u{201d}"), "{html}");
+    }
+
+    /// Every anchor opts into runtime navigation with the default prefetch
+    /// mode, including streamed sections (related products) and the cart.
+    #[tokio::test]
+    async fn links_use_runtime_navigation_with_intent_prefetch() {
+        let router = test_router();
+        let (_, cookie) = post(&router, "/cart/add", "product_id=1", None).await;
+        for page in ["/", "/products?page=2", "/products/1", "/cart"] {
+            let html = get(&router, page, cookie.as_deref()).await;
+            let anchors: Vec<&str> = html
+                .match_indices("<a ")
+                .map(|(at, _)| &html[at..at + html[at..].find('>').unwrap()])
+                .collect();
+            assert!(anchors.len() > 10, "{page}: {html}");
+            for anchor in anchors {
+                assert!(
+                    anchor.contains(r#"data-topcoat-link="intent""#),
+                    "{page}: {anchor}"
+                );
+            }
         }
     }
 

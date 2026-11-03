@@ -2,7 +2,8 @@ use topcoat::{
     Result,
     asset::asset_config,
     context::Cx,
-    view::{PromotedStr, StaticClass, View, class, component, view},
+    runtime::{link, link_attrs, prefetch_mode},
+    view::{PromotedStr, StaticClass, View, attributes, class, component, view},
 };
 
 use crate::{
@@ -72,20 +73,31 @@ pub async fn site_nav(cx: &Cx) -> Result<impl View> {
             <nav
                 class="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-4"
             >
-                <a href="/" class="text-lg font-bold tracking-tight">
+                link(
+                    href: "/",
+                    attrs: attributes! { class="text-lg font-bold tracking-tight" },
                     "Meridian Supply"
-                </a>
+                )
                 <div class="flex items-center gap-6 text-sm font-medium text-slate-600">
-                    <a href="/" class="hover:text-slate-900">"Home"</a>
-                    <a href="/products" class="hover:text-slate-900">"Products"</a>
-                    <a
-                        href="/cart"
-                        class="rounded-full bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-500"
-                    >
+                    link(
+                        href: "/",
+                        attrs: attributes! { class="hover:text-slate-900" },
+                        "Home"
+                    )
+                    link(
+                        href: "/products",
+                        attrs: attributes! { class="hover:text-slate-900" },
+                        "Products"
+                    )
+                    link(
+                        href: "/cart",
+                        attrs: attributes! {
+                            class="rounded-full bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-500"
+                        },
                         "Cart ("
                         (count)
                         ")"
-                    </a>
+                    )
                 </div>
             </nav>
         </header>
@@ -104,8 +116,14 @@ pub async fn site_footer() -> Result<impl View> {
                         <h3 class="mb-3 font-semibold text-slate-900">(title)</h3>
                         <ul class="space-y-2 text-slate-500">
                             for (label, href) in links {
+                                // `#` placeholders stay ordinary fragment links: the
+                                // runtime leaves same-page fragments to the browser.
                                 <li>
-                                    <a href=(href) class="hover:text-slate-900">(label)</a>
+                                    link(
+                                        href: href,
+                                        attrs: attributes! { class="hover:text-slate-900" },
+                                        (label)
+                                    )
                                 </li>
                             }
                         </ul>
@@ -147,13 +165,16 @@ pub async fn rating_stars(tenths: u32, size: &str) -> Result<impl View> {
 /// `sizes` defaults to the product grid's; `priority` marks the likely LCP card.
 #[component]
 pub async fn product_card(
+    cx: &Cx,
     product: &Product,
     #[default(GRID_IMAGE_SIZES)] sizes: &str,
     #[default] priority: bool,
 ) -> Result<impl View> {
     Ok(view! {
+        // A custom anchor with block content: spread the runtime navigation
+        // attributes (`href` + the context's prefetch mode) onto it.
         <a
-            href=(("/products/", product.id))
+            (link_attrs(cx, ("/products/", product.id), prefetch_mode(cx)))
             class="group flex flex-col rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:shadow-md"
         >
             product_photo(
@@ -257,12 +278,11 @@ pub async fn pagination(
             class="mt-10 flex flex-wrap items-center justify-center gap-1 text-sm"
         >
             if current > 1 {
-                <a
-                    href=(products_url(current - 1, sort, category, search))
-                    class=(PAGE_LINK)
-                >
+                link(
+                    href: products_url(current - 1, sort, category, search),
+                    attrs: attributes! { class=(PAGE_LINK) },
                     "Previous"
-                </a>
+                )
             } else {
                 <span class=(PAGE_DISABLED)>"Previous"</span>
             }
@@ -270,21 +290,19 @@ pub async fn pagination(
                 if number == current {
                     <span aria-current="page" class=(PAGE_CURRENT)>(number)</span>
                 } else {
-                    <a
-                        href=(products_url(number, sort, category, search))
-                        class=(PAGE_LINK)
-                    >
+                    link(
+                        href: products_url(number, sort, category, search),
+                        attrs: attributes! { class=(PAGE_LINK) },
                         (number)
-                    </a>
+                    )
                 }
             }
             if current < page_count {
-                <a
-                    href=(products_url(current + 1, sort, category, search))
-                    class=(PAGE_LINK)
-                >
+                link(
+                    href: products_url(current + 1, sort, category, search),
+                    attrs: attributes! { class=(PAGE_LINK) },
                     "Next"
-                </a>
+                )
             } else {
                 <span class=(PAGE_DISABLED)>"Next"</span>
             }
@@ -297,17 +315,28 @@ pub async fn breadcrumbs(category: &str, category_slug: &str, name: &str) -> Res
     Ok(view! {
         <nav aria-label="Breadcrumb" class="text-sm text-slate-500">
             <ol class="flex flex-wrap items-center gap-2">
-                <li><a href="/" class="hover:text-slate-900">"Home"</a></li>
-                <li>"/"</li>
-                <li><a href="/products" class="hover:text-slate-900">"Products"</a></li>
+                <li>
+                    link(
+                        href: "/",
+                        attrs: attributes! { class="hover:text-slate-900" },
+                        "Home"
+                    )
+                </li>
                 <li>"/"</li>
                 <li>
-                    <a
-                        href=(("/products?category=", category_slug))
-                        class="hover:text-slate-900"
-                    >
+                    link(
+                        href: "/products",
+                        attrs: attributes! { class="hover:text-slate-900" },
+                        "Products"
+                    )
+                </li>
+                <li>"/"</li>
+                <li>
+                    link(
+                        href: ("/products?category=", category_slug),
+                        attrs: attributes! { class="hover:text-slate-900" },
                         (category)
-                    </a>
+                    )
                 </li>
                 <li>"/"</li>
                 <li class="font-medium text-slate-900">(name)</li>

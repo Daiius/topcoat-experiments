@@ -5,7 +5,8 @@ use topcoat::{
     Result,
     context::{Cx, app_context},
     router::{href, page},
-    view::{View, view},
+    runtime::link,
+    view::{View, attributes, view},
 };
 
 use crate::{
@@ -28,12 +29,13 @@ async fn cart_page(cx: &Cx) -> Result<impl View> {
                 class="mt-8 rounded-xl border border-slate-200 bg-white p-8 text-center"
             >
                 <p class="text-slate-500">"Your cart is empty."</p>
-                <a
-                    href="/products"
-                    class="mt-4 inline-block text-sm font-medium text-indigo-600 hover:text-indigo-500"
-                >
+                link(
+                    href: "/products",
+                    attrs: attributes! {
+                        class="mt-4 inline-block text-sm font-medium text-indigo-600 hover:text-indigo-500"
+                    },
                     "Browse products"
-                </a>
+                )
             </div>
         } else {
             <ul
@@ -52,12 +54,13 @@ async fn cart_page(cx: &Cx) -> Result<impl View> {
                             )
                         </div>
                         <div class="min-w-0 flex-1">
-                            <a
-                                href=(("/products/", product.id))
-                                class="font-semibold text-slate-900 hover:text-indigo-600"
-                            >
+                            link(
+                                href: ("/products/", product.id),
+                                attrs: attributes! {
+                                    class="font-semibold text-slate-900 hover:text-indigo-600"
+                                },
                                 (&product.name)
-                            </a>
+                            )
                             <p class="text-sm text-slate-500">
                                 (product.price())
                                 " each"

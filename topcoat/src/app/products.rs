@@ -1,11 +1,13 @@
 mod id;
 
+use std::hash::{BuildHasher, RandomState};
+
 use topcoat::{
     Result,
     context::{Cx, app_context},
     router::{page, query_params},
-    runtime::{Event, shard, signal},
-    view::{StaticClass, View, class, view},
+    runtime::{Event, link, shard, signal},
+    view::{StaticClass, View, attributes, class, view},
 };
 
 use crate::{
@@ -50,7 +52,14 @@ async fn products(cx: &Cx) -> Result<impl View> {
 
     // The search box lives in the browser. Typing re-renders only the
     // `product_results` shard; the rest of the page stays as it is.
-    let search = signal(cx, || initial_search.clone());
+    //
+    // Runtime navigation posts the previous page's signal values, and a
+    // signal declared at the same place takes them over. Here the URL's `q`
+    // is the source of truth (the input handler keeps it in step), so a
+    // link without `q` must not inherit the query typed before. A fresh key
+    // per render gives the signal an identity no earlier page declared.
+    let fresh = RandomState::new().hash_one(cx.id());
+    let search = signal(&cx.keyed(fresh), || initial_search.clone());
 
     Ok(view! {
         <div class="flex flex-wrap items-center justify-between gap-4">
@@ -121,31 +130,35 @@ async fn product_results(
         <div class="mt-6 flex flex-wrap items-center gap-2 text-sm">
             <span class="font-medium text-slate-500">"Sort:"</span>
             for (value, label) in SORT_OPTIONS {
-                <a
-                    href=(products_url(1, value, category.as_deref(), search.as_deref()))
-                    class=(class!(CHIP_ACTIVE if value == sort else CHIP_INACTIVE))
-                >
+                link(
+                    href: products_url(1, value, category.as_deref(), search.as_deref()),
+                    attrs: attributes! {
+                        class=(class!(CHIP_ACTIVE if value == sort else CHIP_INACTIVE))
+                    },
                     (label)
-                </a>
+                )
             }
         </div>
         <div class="mt-3 flex flex-wrap items-center gap-2 text-sm">
             <span class="font-medium text-slate-500">"Category:"</span>
-            <a
-                href=(products_url(1, sort, None, search.as_deref()))
-                class=(class!(CHIP_ACTIVE if category.is_none() else CHIP_INACTIVE))
-            >
+            link(
+                href: products_url(1, sort, None, search.as_deref()),
+                attrs: attributes! {
+                    class=(class!(CHIP_ACTIVE if category.is_none() else CHIP_INACTIVE))
+                },
                 "All"
-            </a>
+            )
             for entry in catalog.categories() {
-                <a
-                    href=(products_url(1, sort, Some(&entry.slug), search.as_deref()))
-                    class=(class!(
-                        CHIP_ACTIVE if category.as_deref() == Some(entry.slug.as_str()) else CHIP_INACTIVE,
-                    ))
-                >
+                link(
+                    href: products_url(1, sort, Some(&entry.slug), search.as_deref()),
+                    attrs: attributes! {
+                        class=(class!(
+                            CHIP_ACTIVE if category.as_deref()
+                                == Some(entry.slug.as_str()) else CHIP_INACTIVE,
+                        ))
+                    },
                     (&entry.name)
-                </a>
+                )
             }
         </div>
         <p class="mt-6 text-sm text-slate-500" aria-live="polite">
