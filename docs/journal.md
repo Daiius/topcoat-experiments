@@ -795,3 +795,23 @@
 - docs の Container のページには書かれていないが、`vercel build --prod` を手元で実行すると、ローカルの docker で `Dockerfile` をビルドし、Vercel Container Registry に push して `.vercel/output/functions/container.func` を作った（キャッシュ済みで 19 秒、うち push 15 秒）。あとは `vercel deploy --prebuilt` で Vercel 側のビルドなしに出せる。
 - 「キャッシュが効く場所でビルドして成果物だけ送る」は Vercel 公式の CI 手順（Using Vercel CLI for custom workflows）と同じ形。Next.js でも同じ手順が使えるので、Rust 専用の回避策ではなくプラットフォームの正規の道。
 - これで ghcr を public にする必要も、`FROM` 1 行の Dockerfile を Vercel にビルドさせる回避策も要らなくなった（ghcr は VPS 用に残す）。
+
+## 2026-11-03 [Vercel][topcoat] イメージは Vercel Container Registry に溜まり、Hobby は 50 件まで
+
+- Vercel 側のビルドも `vercel build`（手元・GHA）も、イメージを VCR（`vcr.vercel.com/<team>/<project>/dockerfile`）に push する。`container.func` の `handler` はその digest を指すだけで、ghcr から直接 pull されることはない（ghcr は受け渡し用で private のままでよい）。
+- 料金はストレージ $0.10/GB のみで 12MB 程度なら無視できる。効くのは件数の上限で、Hobby は 1 リポジトリ 50 イメージ。自動削除・保持期間の記載は無い（https://vercel.com/docs/container-registry/limits-and-pricing）。docker で push すると Index も 1 件として数えられ、1 デプロイで約 2 件増える。
+- 古いイメージを消すと、それを使うデプロイへのロールバックが壊れるはず。当面は掃除せず、上限が近づいたら手で消す。Next.js 版にはこの管理対象自体が無い。
+
+## 2026-11-03 [Vercel][topcoat] hnd1 に移したあとのレイテンシ（国内の回線から curl / Playwright）
+
+- 新規接続ごとの TTFB は 100〜160ms。内訳は DNS 26 + TCP 17 + TLS 30 前後で、サーバー処理と往復は 25〜40ms。接続を再利用すると `/products` の TTFB は 25〜49ms（1 回目のみ 118ms）。
+- HTML は `cache-control: public, max-age=0, must-revalidate` で毎回 `x-vercel-cache: MISS`（コンテナが毎回描画）。`/_topcoat/assets/*` は `immutable` なので 2 回目から CDN の HIT。topcoat 側で何もしなくても静的資源は Vercel の CDN に載る。
+- `/products/1` は TTFB 110〜140ms、完了まで約 910ms。関連商品の擬似遅延（800ms）を streaming で待つ分。ブラウザの load も 978ms。
+- 在庫の `live!` は `wss://…/products/1` で接続でき、12 秒で 3 フレーム受信して値も変わった。Container Runtime 上で WebSocket の Upgrade は通る（長時間保持の上限は未確認）。
+
+## 2026-11-03 [Vercel][Next.js] corepack はリポジトリのルートの package.json しか見ない
+
+- `nextjs/package.json` に `packageManager: pnpm@11.24.0`、環境変数に `ENABLE_EXPERIMENTAL_COREPACK=1` を入れても `Could not enable corepack because package.json is missing "packageManager"` と出て、古い pnpm で `Ignoring not compatible lockfile` → `ERR_INVALID_THIS` の連続で止まった。
+- 当初 Node 26（corepack 非同梱）を疑って 24.x に下げたが、結果は同じだった。CLI のソース（`vercel/dist/commands/build/index.js` の `initCorepack`）を読むと、`join(repoRootPath, "package.json")` を読んでいて、Root Directory（`nextjs/`）の package.json は見ていない。
+- 回避: リポジトリのルートに `{"private": true, "packageManager": "pnpm@11.24.0"}` だけの package.json を置く。モノレポでない「サブディレクトリに 1 アプリ」の構成で踏む。所要 30 分ほど。
+- topcoat 版（Container）はビルドに Node を使わないので、この種の詰まりは無い。

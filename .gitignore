@@ -12,3 +12,4 @@ node_modules/
 .playwright-mcp/
 # Vercel deploy state (scripts/deploy-vercel.sh): project IDs and URLs
 /deploy/
+.vercel
