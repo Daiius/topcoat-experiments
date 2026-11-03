@@ -191,21 +191,18 @@ Container（topcoat、イメージ 18.5 MiB）と Node 関数（Next）で差が
 - Instant Rollback: https://vercel.com/docs/instant-rollback
 - Container Registry の上限: https://vercel.com/docs/container-registry/limits-and-pricing
 
-## 追記（2026-11-03）: topcoat は GitHub Actions でビルドしてから Vercel に出す（D40）
+## 追記（2026-11-03）: topcoat は手元でビルドして prebuilt で出す（D40, D43）
 
-Vercel の Container ビルドはキャッシュが効かず毎回 10 分かかったため（journal）、topcoat の流れを変えた。Next.js は Git 連携のまま。
+Vercel の Container ビルドはキャッシュが効かず毎回 10 分かかったため（journal）、topcoat は Vercel 側でビルドしない。Next.js は Git 連携のまま。
 
-| 段 | どこで | 中身 |
-|---|---|---|
-| 1. イメージ | GitHub Actions（`.github/workflows/topcoat.yml`） | `topcoat.Dockerfile` を buildx でビルド。レイヤーを GitHub Actions のキャッシュに保存（`type=gha`, `mode=max`）。`ghcr.io/daiius/topcoat-experiments-topcoat:{sha,latest}` に push |
-| 2. 起動確認 | 同上 | push したイメージを起動し、5 ルートの status を確かめる |
-| 3. デプロイ | 同上 | ルートの `Dockerfile` を `FROM <image>@<digest>` に書き換え（コミットはしない）、`vercel build --prod` → `vercel deploy --prebuilt --prod` |
+```
+./scripts/image-topcoat.sh                          # topcoat.Dockerfile をビルドして起動確認、:latest を手元に付ける
+vercel build --prod && vercel deploy --prebuilt --prod   # リポジトリ直下（.vercel/ は topcoat にリンク済み）
+```
 
-- **`vercel build` はコンテナにも対応している**（2026-11-03 にローカルで確認）。ランナー（手元）の docker で `Dockerfile` をビルドし、Vercel Container Registry（`vcr.vercel.com/<team>/<project>/dockerfile@sha256:…`）へ push して、`.vercel/output/functions/container.func` を作る。`deploy --prebuilt` は Vercel 側でビルドしない。手元で試した所要は 19 秒（ビルドはキャッシュ済み、push 15 秒）。
-  公式の「CI でビルドして成果物だけ送る」手順（https://vercel.com/kb/guide/using-vercel-cli-for-custom-workflows）がそのまま使える。
-- ghcr からの pull はランナーが行うので、**ghcr のパッケージは private のままでよい**。
-- 手元から出すときも同じ: `vercel pull --yes --environment=production && vercel build --prod && vercel deploy --prebuilt --prod`（`VERCEL_ORG_ID` / `VERCEL_PROJECT_ID` を指定）。
-
-- **Vercel の topcoat プロジェクトは Git 連携を切る**（Settings > Git > Disconnect）。つないだままだと、push のたびに Vercel 側でも `FROM …:latest` のデプロイが走り、Actions の push 前の古いイメージを出してしまう（最後は Actions のデプロイで上書きされるが無駄）。
-- 必要な設定は Repository の Variables `VERCEL_ORG_ID` / `VERCEL_PROJECT_ID`（`.vercel/project.json` の `orgId` / `projectId`）と、Secret `VERCEL_TOKEN`。どれも手で入れる。
-- ローカルや VPS 向けのビルドは `scripts/image-topcoat.sh`（`topcoat.Dockerfile` を使う）。
+- **`vercel build` はコンテナにも対応している**（2026-11-03 にローカルで確認）。手元の docker でルートの `Dockerfile`（`FROM …-topcoat:latest` の 1 行）をビルドし、Vercel Container Registry（`vcr.vercel.com/<team>/<project>/dockerfile@sha256:…`）へ push して、`.vercel/output/functions/container.func` を作る。`deploy --prebuilt` は Vercel 側でビルドしない。
+  公式の「CI でビルドして成果物だけ送る」手順（https://vercel.com/kb/guide/using-vercel-cli-for-custom-workflows）と同じ形。
+- `FROM` は手元の docker のイメージを使う（ghcr から pull しない）。**`image-topcoat.sh` を先に実行しないと、手元に残っている古い `:latest` が出る**。
+- **Vercel の topcoat プロジェクトは Git 連携を切ってある**。つないだままだと push のたびに Vercel 側で `FROM …:latest` のビルドが走る（ghcr は private なので失敗する）。
+- 当初は GitHub Actions（レイヤーキャッシュ付き）でビルドして出す workflow を作ったが、手元からの prebuilt で十分速く、Vercel のトークンを GitHub に置く必要もないので入れなかった（D43）。
+- ghcr.io への push は VPS 用（`./scripts/image-topcoat.sh --push`）。

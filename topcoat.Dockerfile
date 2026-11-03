@@ -1,9 +1,9 @@
 # syntax=docker/dockerfile:1
 #
-# topcoat storefront, built from source. GitHub Actions builds this file and
-# pushes the image to ghcr.io; the root `Dockerfile` that Vercel builds only
-# refers to that image (Vercel's container builds keep no cache, so building
-# from source there took 10 minutes every time). The build context is the
+# topcoat storefront, built from source (scripts/image-topcoat.sh). The root
+# `Dockerfile` that `vercel build` uses only refers to this image (Vercel's
+# container builds keep no cache, so building from source there took
+# 10 minutes every time). The build context is the
 # repository root because the crate reads ../data via `include_str!` and `asset!`.
 #
 #   DOCKER_BUILDKIT=1 docker build -f topcoat.Dockerfile -t storefront-topcoat .
