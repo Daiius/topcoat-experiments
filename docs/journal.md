@@ -782,3 +782,10 @@
 
 - ダッシュボードで手入力した `COOKIE_KEY` が 128 桁の hex でなく、起動時に `COOKIE_KEY must be hex-encoded` で panic（`src/cart.rs` の `signing_key`）。Container Runtime はリクエストのたびにコンテナを起動し直し、毎回 `Application exited with code 101.` → 500。
 - 設計どおりの fail-fast（不正な鍵で黙って動かない）だが、Vercel ではデプロイ自体は成功扱いで、最初のリクエストまで気づけない。`scripts/vercel-cookie-key.sh` で鍵を生成して stdin で登録し直す。
+
+## 2026-11-03 [Vercel][topcoat] Container のビルドは buildah で、前回のキャッシュが効かない
+
+- ビルドログ（`vercel inspect <url> --logs`）より: ビルダーは **buildah 1.43.4**（BuildKit ではない）。2 回とも冒頭に `Previous build caches not available.`。Redeploy（2 回目）でも `cargo install topcoat-cli` から全部やり直した。
+- 内訳（1 回目、計 10 分）: ベースイメージ取得 28 秒 → `topcoat-cli` のソースビルド **5 分 24 秒** → アプリの release ビルド **4 分 05 秒** → distroless へコピー数秒。
+- `RUN --mount=type=cache` は構文エラーにはならないが、ビルドをまたいで中身が残らない。レイヤーキャッシュも引き継がれない。Rust は「依存込みのフルビルド時間 = 毎回のデプロイ時間」になる。
+- Next.js（Vercel ネイティブ）はビルドキャッシュ（`.next/cache`）を Vercel が保存・復元する。この差はフレームワークではなく「プラットフォームのネイティブ対応か、汎用コンテナか」の差。
