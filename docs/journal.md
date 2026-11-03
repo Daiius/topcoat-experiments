@@ -756,3 +756,17 @@
 - **注記: Vercel では結論が変わりうる。** Vercel では、◐ のページでも静的シェルはエッジから返り、関数は穴の部分だけを描く。
   自前ホスト（`next start`）では、シェルの送出も resume も同じ Node プロセスの 1 CPU で行うので、穴 1 つのコストがそのまま RPS に出る。
   「動的な穴を外すと速くなる」は自前ホストの結論であり、Vercel ではまず TTFB（シェル）は変わらず、関数の起動回数と課金に効く、という形で現れるはず → デプロイ時に確認。
+
+## 2026-11-03 [DX] Cloudflare Tunnel 越しに開発サーバーを開く（`scripts/dev-remote.sh`）
+
+- **Next.js**: 公開ホスト名を `allowedDevOrigins` に入れないと、`/_next` の dev 資源と HMR が 403 で弾かれる（実測: 許可外ホストは 403、ログに設定例が出る）。env で渡す形にした。
+- **topcoat**: `topcoat dev` は `PORT` が埋まっていると**黙って次の番号に移る**（`topcoat-cli` `src/dev/port.rs`）。tunnel の向き先とずれるので、スクリプト側で空きを確認してから起動する。
+- **topcoat のライブ更新**: ページ更新用の `topcoat::dev::script` は `TOPCOAT_DEV_URL`（CLI が `http://127.0.0.1:59039` 付近に立てる broadcast サーバー）を `<script src>` に入れる。トンネル越しのブラウザからは届かない（https ページから http の loopback を参照する形）。そもそも本リポジトリの layout にはこの script を入れていないので、ローカルでも手動リロード。Next.js の HMR は同一オリジンの WebSocket なので、トンネル越しでもそのまま動く。
+
+## 2026-11-03 [Next.js][DX] iOS の Chrome で開くと `<html>` のハイドレーション不一致
+
+- トンネル越しに iPhone で開くと、dev overlay に `A tree hydrated but some attributes ... didn't match` が出た。差分は `<html>` に付いた `__gcrremoteframetoken="…"` だけ（サーバー側に無い属性）。
+- コードの不具合ではない。iOS の Chrome（`__gCrWeb` 系の注入スクリプト）が、React の読み込み前に `<html>` へ属性を足していると見られる。ローカルの Chromium（iPhone 相当の表示）では再現しない。
+- 続けて `/products/1` で、`<form>` と `<input>` に付いた `__gcruniqueid="1"`, `"2"` でも同じエラーが出た（フォームの自動入力用に、iOS の Chrome が番号を振っていると見られる）。
+- 対処: **コードは変えない**。`<html>` に `suppressHydrationWarning` を付けても、フォームの要素ごとに付けて回ることになり、比較対象のコードを汚す。属性の食い違いは本番ビルドでは報告されず、表示も壊れないので、dev overlay にだけ出る雑音として扱う。iPhone で確認するときは Safari を使う。
+- **比較の材料**: topcoat はクライアントで木を作り直さない（サーバーの HTML をそのまま使い、`$()` の部分だけ JS を結びつける）ので、ブラウザや拡張が属性を足してもこの種のエラーは起きない。ハイドレーションという仕組みがある側だけが「外部が HTML に触る」ことを気にする必要がある。

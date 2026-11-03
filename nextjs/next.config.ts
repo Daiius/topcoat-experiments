@@ -8,6 +8,11 @@ const nextConfig: NextConfig = {
   partialPrefetching: true,
   // Only for the local docker measurements; Vercel builds without it.
   output: process.env.STANDALONE ? "standalone" : undefined,
+  // Remote dev through Cloudflare Tunnel (scripts/dev-remote.sh). Without it,
+  // next dev blocks /_next dev resources and HMR from the public hostname.
+  allowedDevOrigins: process.env.NEXT_ALLOWED_DEV_ORIGIN
+    ? [process.env.NEXT_ALLOWED_DEV_ORIGIN]
+    : undefined,
   images: {
     // Product images, copied from ../data/images by scripts/copy-data.mjs.
     localPatterns: [{ pathname: "/images/**", search: "" }],
