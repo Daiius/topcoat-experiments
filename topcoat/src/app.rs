@@ -7,8 +7,12 @@ use topcoat::{
     asset::{Asset, AssetBundle, AssetConfig, RouterBuilderAssetExt, asset},
     context::{Cx, app_context},
     cookie::{Key, RouterBuilderCookieExt},
-    router::{Router, RouterBuilderDiscoverExt, Slot, layout, page},
-    runtime::RouterBuilderRuntimeExt,
+    router::{
+        HeaderValue, Method, Router, RouterBuilderDiscoverExt, Slot, header, layout, page,
+        request::{original_method, original_parts},
+        response::response_headers,
+    },
+    runtime::{RUNTIME_HEADER, RouterBuilderRuntimeExt},
     view::{View, view},
 };
 
@@ -43,8 +47,28 @@ fn build(assets: AssetConfig, cookie_key: Key) -> Router {
         .build()
 }
 
+/// How long the browser runtime may reuse a prefetched page (its cap is 30s).
+const RUNTIME_CACHE_CONTROL: HeaderValue = HeaderValue::from_static("private, max-age=30");
+
+/// Whether this request arrived as a runtime page render (a `link` navigation,
+/// its prefetch, or a rerun). `RuntimeLayer` rewrites those POSTs to a GET and
+/// drops the header, so read the request as it arrived.
+fn runtime_render(cx: &Cx) -> bool {
+    original_method(cx) == Method::POST
+        && original_parts(cx)
+            .headers
+            .get(&RUNTIME_HEADER)
+            .is_some_and(|value| value == "true")
+}
+
 #[layout]
-async fn root_layout(slot: Slot<'_>) -> Result<impl View> {
+async fn root_layout(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
+    // Without Cache-Control the runtime reuses a prefetch for 30s, but Vercel
+    // then adds `max-age=0` and every prefetch is discarded. Document GETs keep
+    // no explicit header.
+    if runtime_render(cx) {
+        response_headers(cx).append(header::CACHE_CONTROL, RUNTIME_CACHE_CONTROL);
+    }
     Ok(view! {
         <!DOCTYPE html>
         <html lang="en">
@@ -108,7 +132,7 @@ async fn home(cx: &Cx) -> Result<impl View> {
 mod tests {
     use topcoat::router::{
         Body, StatusCode,
-        header::{CONTENT_TYPE, COOKIE, LOCATION, SET_COOKIE},
+        header::{CACHE_CONTROL, CONTENT_TYPE, COOKIE, LOCATION, SET_COOKIE},
         request::Request,
         response::Response,
         to_bytes,
@@ -171,6 +195,42 @@ mod tests {
             .find(|value| value.starts_with("cart="))
             .map(|value| value.split(';').next().unwrap().to_owned());
         (response, cart_cookie)
+    }
+
+    /// A runtime render (navigation, prefetch, or rerun) may be reused by the
+    /// browser for 30s; a plain document GET keeps no explicit Cache-Control.
+    #[tokio::test]
+    async fn only_runtime_renders_carry_cache_control() {
+        let router = test_router();
+        for path in ["/", "/products", "/products/1", "/cart"] {
+            let request = Request::builder()
+                .method("POST")
+                .uri(path)
+                .header(CONTENT_TYPE, "application/json")
+                .header(&RUNTIME_HEADER, "true")
+                .body(Body::from("{}"))
+                .unwrap();
+            let (response, html) = send(&router, request).await;
+            assert_eq!(response.status(), StatusCode::OK, "{path}: {html}");
+            assert_eq!(
+                response
+                    .headers()
+                    .get_all(CACHE_CONTROL)
+                    .iter()
+                    .collect::<Vec<_>>(),
+                ["private, max-age=30"],
+                "{path}"
+            );
+
+            let request = Request::builder().uri(path).body(Body::empty()).unwrap();
+            let (response, html) = send(&router, request).await;
+            assert_eq!(response.status(), StatusCode::OK, "{path}: {html}");
+            assert!(
+                response.headers().get(CACHE_CONTROL).is_none(),
+                "{path}: {:?}",
+                response.headers()
+            );
+        }
     }
 
     #[tokio::test]
