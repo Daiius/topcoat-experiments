@@ -777,3 +777,8 @@
 - 既製イメージを持ち込む方法は docs に無い。Vercel Container Registry（`vcr.vercel.com`）へ `vercel vcr build docker . --push` で push はできるが、それを関数として動かす手順は書かれていない。ghcr.io など外部レジストリの参照・pull secret も記載なし（https://vercel.com/docs/functions/runtimes/container, https://vercel.com/docs/container-registry）。
 - 未検証の回避策: `FROM ghcr.io/…:<tag>` 1 行の Dockerfile を Vercel にビルドさせる（公開イメージなら認証不要のはず）。
 - Next.js（ネイティブ）との対比は Next.js のデプロイ後に記録する（見込みは 2〜3 分）。Rust のコンテナは「コンパイル時間がそのままデプロイ時間」になる。
+
+## 2026-11-03 [Vercel][topcoat] COOKIE_KEY の形式違いで全リクエストが 500
+
+- ダッシュボードで手入力した `COOKIE_KEY` が 128 桁の hex でなく、起動時に `COOKIE_KEY must be hex-encoded` で panic（`src/cart.rs` の `signing_key`）。Container Runtime はリクエストのたびにコンテナを起動し直し、毎回 `Application exited with code 101.` → 500。
+- 設計どおりの fail-fast（不正な鍵で黙って動かない）だが、Vercel ではデプロイ自体は成功扱いで、最初のリクエストまで気づけない。`scripts/vercel-cookie-key.sh` で鍵を生成して stdin で登録し直す。
