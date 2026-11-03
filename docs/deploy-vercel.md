@@ -199,9 +199,13 @@ Vercel の Container ビルドはキャッシュが効かず毎回 10 分かか�
 |---|---|---|
 | 1. イメージ | GitHub Actions（`.github/workflows/topcoat.yml`） | `topcoat.Dockerfile` を buildx でビルド。レイヤーを GitHub Actions のキャッシュに保存（`type=gha`, `mode=max`）。`ghcr.io/daiius/topcoat-experiments-topcoat:{sha,latest}` に push |
 | 2. 起動確認 | 同上 | push したイメージを起動し、5 ルートの status を確かめる |
-| 3. デプロイ | 同上 | ルートの `Dockerfile` を `FROM <image>@<digest>` に書き換え（コミットはしない）、`vercel deploy --prod` |
+| 3. デプロイ | 同上 | ルートの `Dockerfile` を `FROM <image>@<digest>` に書き換え（コミットはしない）、`vercel build --prod` → `vercel deploy --prebuilt --prod` |
+
+- **`vercel build` はコンテナにも対応している**（2026-11-03 にローカルで確認）。ランナー（手元）の docker で `Dockerfile` をビルドし、Vercel Container Registry（`vcr.vercel.com/<team>/<project>/dockerfile@sha256:…`）へ push して、`.vercel/output/functions/container.func` を作る。`deploy --prebuilt` は Vercel 側でビルドしない。手元で試した所要は 19 秒（ビルドはキャッシュ済み、push 15 秒）。
+  公式の「CI でビルドして成果物だけ送る」手順（https://vercel.com/kb/guide/using-vercel-cli-for-custom-workflows）がそのまま使える。
+- ghcr からの pull はランナーが行うので、**ghcr のパッケージは private のままでよい**。
+- 手元から出すときも同じ: `vercel pull --yes --environment=production && vercel build --prod && vercel deploy --prebuilt --prod`（`VERCEL_ORG_ID` / `VERCEL_PROJECT_ID` を指定）。
 
 - **Vercel の topcoat プロジェクトは Git 連携を切る**（Settings > Git > Disconnect）。つないだままだと、push のたびに Vercel 側でも `FROM …:latest` のデプロイが走り、Actions の push 前の古いイメージを出してしまう（最後は Actions のデプロイで上書きされるが無駄）。
 - 必要な設定は `scripts/setup-gha-vercel.sh`（Variables）と、`gh secret set VERCEL_TOKEN`（Secret、手で入れる）。
-- ghcr のパッケージは Vercel から認証なしで pull できるよう public にする（初回の push 後にパッケージ設定で確認）。
 - ローカルや VPS 向けのビルドは `scripts/image-topcoat.sh`（`topcoat.Dockerfile` を使う）。

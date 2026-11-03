@@ -789,3 +789,9 @@
 - 内訳（1 回目、計 10 分）: ベースイメージ取得 28 秒 → `topcoat-cli` のソースビルド **5 分 24 秒** → アプリの release ビルド **4 分 05 秒** → distroless へコピー数秒。
 - `RUN --mount=type=cache` は構文エラーにはならないが、ビルドをまたいで中身が残らない。レイヤーキャッシュも引き継がれない。Rust は「依存込みのフルビルド時間 = 毎回のデプロイ時間」になる。
 - Next.js（Vercel ネイティブ）はビルドキャッシュ（`.next/cache`）を Vercel が保存・復元する。この差はフレームワークではなく「プラットフォームのネイティブ対応か、汎用コンテナか」の差。
+
+## 2026-11-03 [Vercel][topcoat] `vercel build` + `deploy --prebuilt` がコンテナでも使える
+
+- docs の Container のページには書かれていないが、`vercel build --prod` を手元で実行すると、ローカルの docker で `Dockerfile` をビルドし、Vercel Container Registry に push して `.vercel/output/functions/container.func` を作った（キャッシュ済みで 19 秒、うち push 15 秒）。あとは `vercel deploy --prebuilt` で Vercel 側のビルドなしに出せる。
+- 「キャッシュが効く場所でビルドして成果物だけ送る」は Vercel 公式の CI 手順（Using Vercel CLI for custom workflows）と同じ形。Next.js でも同じ手順が使えるので、Rust 専用の回避策ではなくプラットフォームの正規の道。
+- これで ghcr を public にする必要も、`FROM` 1 行の Dockerfile を Vercel にビルドさせる回避策も要らなくなった（ghcr は VPS 用に残す）。
