@@ -1,0 +1,22 @@
+# topcoat 版を VPS で動かす compose（前段の Cloudflare / リバースプロキシは compose の外）。
+#
+# VPS 側で、このファイルと同じディレクトリに .env を置く（値はリポジトリに書かない）:
+#   COOKIE_KEY=<128 桁の hex。od -An -tx1 -N64 /dev/urandom | tr -d ' \n' などで作る>
+#   TAG=<scripts/image-topcoat.sh が push したハッシュのタグ。省略時は latest>
+#   BIND=127.0.0.1:18300   # 前段（nginx / cloudflared）から向ける先
+#
+#   docker compose pull && docker compose up -d
+#
+# 条件は Vercel Hobby の関数（1 vCPU / 2 GB）とローカル計測（bench/compose.yml）に揃える。
+services:
+  topcoat:
+    image: ghcr.io/daiius/topcoat-experiments-topcoat:${TAG:-latest}
+    restart: unless-stopped
+    environment:
+      COOKIE_KEY: ${COOKIE_KEY:?COOKIE_KEY is required}
+    ports:
+      - ${BIND:-127.0.0.1:18300}:80
+    cpus: 1
+    mem_limit: 2g
+    # SIGTERM で graceful shutdown（topcoat は最大 30 秒待つ）
+    stop_grace_period: 35s

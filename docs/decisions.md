@@ -43,3 +43,4 @@
 | D36 | 11-03 | 自律 | `next dev` が自動生成する `nextjs/AGENTS.md` をコミットする | 削除しても再生成され、Next.js 自身がコミットを推奨 |
 | D37 | 11-03 | 自律 | Vercel デプロイ手順（`scripts/deploy-vercel.sh`, `docs/deploy-vercel.md`）を merge。実デプロイはユーザー確認後（CLI はログイン済み daiius だが公開を伴うため夜間は実行しない） | D12。setup 既定: Corepack 有効、Next のビルドコマンド上書き、`--prod` 推奨、プロジェクト名 `topcoat-practice-{topcoat,nextjs}` |
 | D38 | 11-03 | ユーザー | Cloudflare Tunnel 越しの開発環境確認は、両版を同時に起動し別ポート・別ホスト名にする（Next.js 18101 / topcoat 18202、`scripts/dev-remote.sh` + `.env.remote`） | 両版とも `/` 起点の同じパス構成なので、パスで振り分けると衝突する。cloudflared は token 管理（systemd）なので ingress はダッシュボード側で設定 |
+| D39 | 11-03 | ユーザー | topcoat 版は個人の VPS（前段 Cloudflare の CDN）にも置き、Vercel Container と比べる。Next.js 版は Vercel のみ。イメージは手元でビルドして ghcr.io に push する（`scripts/image-topcoat.sh`、`ops/vps/compose.yml`） | Vercel の topcoat ビルドが初回 10 分。Vercel は既製イメージのデプロイも外部レジストリの参照も docs に無い（Dockerfile のビルドのみ）。リモートは `Daiius/topcoat-experiments`（public） |
