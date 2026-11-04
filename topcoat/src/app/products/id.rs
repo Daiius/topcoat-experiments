@@ -198,6 +198,10 @@ mod tests {
     use super::*;
     use crate::{images::test_asset_config, remote::RELATED_DELAY};
 
+    // Recommendations are cached per process and the other page tests visit
+    // product 1, so this test times a product no other test fetches.
+    const PRODUCT: u32 = 4;
+
     // Module-derived pages cannot be registered by hand, and the real layout
     // needs the asset bundle, so this page mounts the same two boundaries
     // `product_detail` uses on an explicit path.
@@ -206,11 +210,11 @@ mod tests {
         Ok(view! {
             suspense(
                 fallback: view! { review_list_skeleton(count: 1) },
-                reviews(product_id: 1)
+                reviews(product_id: PRODUCT)
             )
             suspense(
                 fallback: view! { related_grid_skeleton(count: 1) },
-                related(product_id: 1)
+                related(product_id: PRODUCT)
             )
         })
     }
@@ -240,7 +244,7 @@ mod tests {
                 .unwrap_or_else(|| panic!("{needle:?} missing from {html}"))
         };
         let catalog = Catalog::load();
-        let product = catalog.get(1).unwrap();
+        let product = catalog.get(PRODUCT).unwrap();
         let first_review = &product.reviews[0].title;
         let first_related = &catalog.get(product.related_ids[0]).unwrap().name;
 
