@@ -228,3 +228,133 @@ let srcset = image.widths()
 - **結果（Vercel 本番、1 秒ホバー後のクリック）**: topcoat は商品名・関連商品とも 26ms（先読みで丸ごと済んでいる）。Next.js は 112 / 115ms で、ホバーしなくても同じ（中身はクリック時に取る）。先読みが間に合わないと topcoat は関連商品が 1363ms（journal 2026-11-04）。
 - **デプロイ先の既定が効く**: topcoat は `Cache-Control` で使える時間を決めるので、Vercel が付ける `public, max-age=0, must-revalidate` で先読みが無効になった。runtime の応答にだけ `private, max-age=30` を付けて解消（`topcoat/src/app.rs`）。Next.js は自前の RSC ヘッダーで `stale` を運ぶので、この影響を受けない。
 - **古い内容を見せる危険**: このストアのカート操作はフォーム送信でドキュメント全体を読み直し、先読みの保持も消えるので、追加前に先読みした古い件数は残らない。残るのは別タブで操作した場合くらい。
+
+## 機能の対応表（topcoat の予定を含む。2026-11-04 時点）
+
+topcoat 側の印: ✅ 0.11.0 にある ／ 🗺 README の Roadmap にある（v0.11.0 と main で同じ内容）／ — Roadmap にも Issue にも見当たらない ／ 🔀 main には入ったが未リリース。
+「予定に無い」は、2026-11-04 時点で README と Issue を検索して見当たらなかった、という意味で、作らないと決まっているわけではない。
+
+| 機能 | Next.js 16 | topcoat | このリポジトリでの扱い |
+|---|---|---|---|
+| 遅いデータのストリーミング | `<Suspense>` | ✅ `suspense` | 両版で使用（レビュー・関連商品） |
+| クライアント遷移・先読み | `<Link>` + Router Cache | ✅ `runtime::link`（`Intent` / `Viewport` / `Never`、使い回しは最長 30 秒） | 両版で使用 |
+| 部分再描画 | Server Action、`router.refresh` | ✅ `#[shard]`、`#[procedure]` | 両版で使用（検索・カート） |
+| サーバーからの push | 無し（SSE を自作） | ✅ `live!` + `emit!`（WebSocket） | 両版で使用（在庫） |
+| ブラウザ側の状態・反応性 | React（`useState` など） | ✅ `signal` + `$()` ／ 🗺 (More) reactivity | topcoat は検索語で使用 |
+| 部品単位でだけ JS を動かす | Client Component（ファイル単位） | ✅ `$()`（式単位）／ 🗺 Islands | — |
+| ページの事前描画（SSG） | `generateStaticParams` | 🗺 Pre-rendering for static pages | Next.js は 500 件をビルド時に生成 |
+| 静的書き出し | `output: 'export'` | 🗺 Static export | 未使用 |
+| データ単位のキャッシュ | `'use cache'` + `cacheLife` + タグ | — （`#[memoize]` は 1 リクエスト内だけ。リクエストをまたぐなら App context に自作） | Next.js は関連商品・カタログで使用。topcoat は未実装（候補） |
+| ページ内の静的／動的の分割 | `cacheComponents`（静的シェル + 動的な穴） | — | Next.js で使用 |
+| 再検証（ISR、タグで無効化） | `revalidateTag` など | — | 未使用 |
+| 画像最適化 | `next/image`（実行時に変換） | 🗺 Image optimization / resizing | topcoat は事前変換のスクリプトと `srcset` を自作 |
+| 静的資源（ハッシュ付き、`immutable`） | 自動 | ✅ `asset!`、外部ホストは `AssetConfig::hosted_at` | 両版で使用 |
+| フォント | `next/font` | ✅ `topcoat-font` | 未使用 |
+| `<head>` のメタデータ | Metadata API | 🔀 #570 | 未使用 |
+| 多言語化 | 組み込み無し（App Router はライブラリか自作） | ✅ `topcoat-l10n` | 未使用 |
+| メール | 組み込み無し | ✅ `topcoat-mail` | 未使用 |
+| セッション・cookie | `cookies()` | ✅ `topcoat-cookie`（署名付き）、`topcoat-session` | 両版で cookie のカート |
+| フォームの検証 | 組み込み無し（zod など） | 🗺 Validations | 手書き |
+| 認証 | 組み込み無し（Auth.js など） | 🗺 Authentication | 未使用 |
+| ミドルウェア・レート制限 | `proxy.ts`（旧 middleware） | ✅ tower の Layer ／ 🗺 Easier-to-use middlewares | 未使用 |
+| 応答後の処理・ジョブ | `after()`（ジョブはプラットフォーム側） | 🗺 Background jobs | 未使用 |
+| Markdown | `@next/mdx` | 🗺 Markdown support | 未使用 |
+| API の定義書き出し | 組み込み無し | 🗺 OpenAPI endpoints | 未使用 |
+| WebTransport | 無し | 🗺 WebTransport | — |
+| デプロイ先 | Vercel（ネイティブ）、standalone、OpenNext 等で Cloudflare Workers | ✅ ネイティブのサーバー（コンテナ）、✅ Cloudflare Workers（`examples/cloudflare-worker`、Wasm。runtime の WebSocket は使えない）／ 🗺 Docs for how to deploy | 両版を Vercel、topcoat は VPS にも |
+
+**読み方**
+
+- **「いつ描くか」側の差（事前描画・静的書き出し・画像）は、ほぼ Roadmap に載っている**。成熟度の差として書ける。
+- **Roadmap に無いのは、データ単位のキャッシュ・ページ内の静的／動的分割・再検証の 3 つ**。前節までの「設計の差として残りそうなもの」と一致する。
+- topcoat にだけあるのは、サーバーからの push（`live!`）、式単位の JS、多言語化・メールなどの同梱（"batteries-included"）。
+- 上の「対比の表現」の表のうち、「遷移: 毎回フルロード」は `link` を使っていなかった実装の話で、「デプロイ: コンテナ」は Workers の例を見落としていた。この表の方が新しい。
+
+## 検討メモ（2026-11-04、会話での検討。記事への採否は未定）
+
+### topcoat の「シンプル」は何がシンプルか
+
+- 機能の数は少なくない。このストアで使った topcoat 固有の仕組みは `link` 36・`shard` 13・`signal` 12・`suspense` 5・`connected` 4・`asset!` 3・`live!` 1・`procedure` 1 箇所。Next.js は `Suspense` 18・`cacheLife` 6・`'use cache'` 4・`connection()` 3・`generateStaticParams` 2・`'use client'` / `'use server'` 各 1。
+- シンプルなのは**時間の軸が 1 本**であること。`suspense`（後から流す）・`shard`（一部を描き直す）・`live!`（繰り返し描いて送る）・`$()`（そこだけブラウザで評価）は、どれも「このリクエスト（接続）の中でサーバーが描く」の変形で、組み合わせても挙動が増えない。
+- Next.js は同じコンポーネントが「ビルド時・キャッシュ・リクエスト時」のどれで描かれるかが、宣言（`'use cache'`）と触る API（`cookies()`、`connection()`）の組み合わせで決まる。今回の詰まりどころ（`connection()` で動的にする箇所、静的シェルと穴の境界、Router Cache の 30 秒下限、`partialPrefetching` で先読みの中身が変わる）はほぼこの暗黙のモードから来ている。
+
+### キャッシュが省くもの 2 種類と「毎回描く」スタンス
+
+| 省くもの | 描画が速ければ不要か |
+|---|---|
+| HTML を組み立てる計算 | 不要になる（topcoat の強み。TTFB 約 115ms で Next.js の静的シェルとほぼ同じ） |
+| 遅いデータを待つ時間（関連商品の 800ms、DB・外部 API） | **不要にならない**。C のクリック遷移で Next.js 132ms・topcoat 880ms の差はここ |
+
+- 「topcoat は、キャッシュを組むより毎回パッと描いた方が早い」という見方は、0.11 時点の使用感としては合う。ただし公式の主張ではない（Roadmap に事前描画・静的書き出しがある）。
+- 言い換え案: Next.js は描く手間とデータ待ちの両方をキャッシュで消す仕組みを最初から持ち、代わりに静的／動的を常に意識させる。topcoat は描く手間が小さいので多くのページは毎回描いても困らず、データ待ちを消したい所だけ自分でキャッシュを書く。
+
+### ヘッダーのカート件数が HTTP キャッシュを妨げる理由
+
+- CDN のキャッシュ単位は**応答 1 本まるごと**。全ページ共通のレイアウトに cookie 依存の件数が 1 か所あると、応答全体がユーザーごとに変わり、URL で共有できない（`Vary: Cookie` は人数分のキャッシュになり実質使えない）。`suspense` で後から流す部分も同じ応答なので切り離せない。topcoat 固有ではなく HTTP の性質。
+- Next.js（`cacheComponents` = Partial Prerendering）: ビルド時に描画を `<Suspense>` の位置で止め（React 19 の `prerender`）、止めるまでの HTML を静的シェルとして保存。リクエスト時はシェルを返し始め、同じ応答の続きとして穴だけ `resume` で描いて流す。**CDN が応答の一部だけをキャッシュしているのではなく、Vercel の基盤がシェル（CDN）と関数の出力を 1 本の応答につないでいる**。
+- セルフホストの Next.js を Cloudflare の後ろに置くと、HTML に穴が含まれるので Cloudflare はやはりキャッシュできない（シェルは Next.js のサーバーが自分のメモリから返す）。
+- 考え方自体は古い（ESI、静的 HTML + JS で穴を取得）。Next.js の新しさは、穴の位置を `<Suspense>` から自動で決め、追加の往復なしに 1 本の応答で返すこと。
+- このストアがサーバーで件数を描いているのは、両版を「サーバーで描く・JS なしで動く」素直な形に揃えたため（AGENTS.md）と、topcoat にはリクエストをまたぐキャッシュが無く外に出す動機がなかったため。カート cookie は両版とも HttpOnly・署名付き（`topcoat/src/cart.rs:97`、`nextjs/src/lib/cart.ts:67`）。
+- 件数をページの外に出すなら、**表示専用の cookie（`cart_count`、HttpOnly でも署名付きでもない）を別に書く**のが定石。改ざんされても変わるのは本人の画面だけで、本体は署名付き cookie から読む。代償はちらつき・JS 必須・更新の同期。これで HTML が誰にでも同じになり、`s-maxage` で CDN に載せられる。
+- 記事向けの一文案: 「部品ごとのキャッシュは高度な仕組みだが、topcoat で同じ効果を得るのに要るのは、ユーザー依存の部分をページから外すという設計判断ひとつ。その判断を Next.js はフレームワークが強制し、topcoat は利用者に任せている」。
+
+### topcoat にキャッシュを足すなら（候補、未実装）
+
+| # | 対象 | やり方 | Next.js の対応物 |
+|---|---|---|---|
+| 1 | 関連商品（800ms） | App context に商品 id キーのメモリキャッシュ（例: moka の `get_with`、同時取得を 1 回にまとめる）。起動時に全件温めることもできる | `'use cache'` + `cacheLife('max')` |
+| 2 | 検索・絞り込みの一覧（shard） | 同上。検索語・ページ・ソートをキーに | 引数付き `'use cache'`（`getProductsPage`） |
+| 3 | ページの HTML を CDN に | 件数を表示専用 cookie に移し、`response_headers(cx)` で `s-maxage` | 静的シェルの CDN 配信 |
+
+```rust
+// #1 のスケッチ（未検証）
+.app_context(RelatedCache::default())
+
+#[derive(Default)]
+struct RelatedCache(moka::future::Cache<u32, Arc<Vec<Product>>>);
+
+async fn related(cx: &Cx, product_id: u32) -> Result<impl View> {
+    let catalog = app_context::<Catalog>(cx);
+    let related = app_context::<RelatedCache>(cx).0
+        .get_with(product_id, async { Arc::new(fetch_related(catalog, product_id).await) })
+        .await;
+    // …
+}
+```
+
+- #1 で自分で決めることになるもの: キー、有効期限、インスタンスごとに冷えて始まること（起動時に温めるなら、Next.js のビルド時生成を起動時にずらした形）、最初の訪問者の 800ms。
+- 確かめたい点: キャッシュに当たったとき、`suspense` が仮表示を出さずに最初から中身を描くか（Next.js はシェルに焼くので仮表示が出ない）。
+- topcoat 側の予定: Roadmap はページ単位の事前描画・静的書き出しのみで、データ単位のキャッシュは無い。Issue を `cache` で検索しても該当なし。main の #562 で `app_context` / `request_context` が `context` に統合される（0.11.0 から上げると書き方が変わる）。
+
+### セルフホストのしやすさ
+
+| | topcoat | Next.js |
+|---|---|---|
+| メモリ（手元 docker、1 CPU。`bench/results/20261103-024909/memory.json`） | 起動直後 12.9MB / 負荷後 28MB | 97MB / 293MB |
+| 配る物 | バイナリ 1 本 + assets（イメージ 53MB、アプリ層 13MB）。設定は `COOKIE_KEY` だけ | standalone + Node |
+| 複数インスタンス | そのまま（状態なし） | `'use cache'`・ISR のキャッシュがインスタンスごと。揃えるなら `cacheHandler`（Redis 等）を自前で |
+| 静的シェルの CDN 配信 | — | Vercel では自動、セルフホストでは自分で設計 |
+| 画像 | 事前変換（CDN で HIT） | サーバーで実行時変換（CPU・メモリ） |
+
+- Next.js の 300MB は無駄だけではなく、効率化の仕組み（`'use cache'` の結果、ISR、sharp、React の実行環境）をプロセス内に持っている分。topcoat が小さいのは、ネイティブであることに加え、リクエストをまたいで何も持たないから。
+- CPU 制限なしで起動すると topcoat も 85〜90MB になった（tokio がコア数ぶん作業スレッドを立てる）。比べるときは CPU 条件を揃える。
+- まとめ: topcoat はどこに置いても同じように動き、効率化は自分で持つ。Next.js は効率化がフレームワーク側にあるが、一部は Vercel の基盤が前提で、セルフホストでは組み直しが要る。Vercel と VPS で topcoat の数値がほぼ同じだった（journal 2026-11-04）のは前者の裏付け。
+
+### 安いコンテナに置く場合のコスト
+
+- topcoat の負荷: CPU は 200 並列でもほぼ 0%、メモリは最小プラン（256MB）に収まる。起動が速いので scale-to-zero でもコールドスタートの痛みは小さいはず。ただし HTML は毎回サーバーで描くので、計算量はページビューに比例する。
+- 課金モデルとの相性: 固定料金の常駐（VPS 等）◎、scale-to-zero のコンテナ（Cloud Run、Fly の自動停止、Cloudflare Containers）○ だが **`live!` を開いたタブが 1 つでもあるとインスタンスが寝られない**、関数型（Vercel）△（接続時間が課金対象の時間になり、Hobby は 300 秒上限）。安さを狙うなら常駐か、在庫を開いた時点の値・ポーリングにして scale-to-zero を活かすか、の選択になる。
+- 静的資源を分ける: topcoat 0.11.0 は `AssetConfig::hosted_at("https://cdn…/assets", AssetBundle::load()?)` で外部ホストに対応（`topcoat-asset-0.11.0/src/router.rs:44`、Next.js の `assetPrefix` 相当）。R2 などに置けば下り転送が無料で、asset の取得でインスタンスを起こさない。注意: ランタイムの JS は module script なので別オリジンには CORS が要る、asset を先にアップロードしてからコンテナを切り替える、古いハッシュは消さない。同一オリジンのまま前に Cloudflare を置くだけでも効果の大部分は得られる（今回の VPS 構成）。
+
+### Cloudflare に置けるか（訂正込み）
+
+- Cloudflare Workers: **topcoat 0.11.0 に公式の例がある**（`examples/cloudflare-worker`。Wasm にビルドし、fetch ハンドラから `Router::handle`。`serve` 機能は外す。runtime の WebSocket は使えない）。当初「ほぼ無理」と答えたのは誤り。このストアなら `live!` 以外は載る可能性がある（未検証）。
+- Cloudflare Containers: Docker イメージを Worker + Durable Object の後ろで動かす。Vercel Container Runtime に近い位置づけ（未検証）。
+- Next.js は OpenNext の Cloudflare アダプタで Workers に載る。
+
+### topcoat の機能追加への姿勢（Issue の応答から）
+
+- 要望の「問題」は拾う: 多言語化（#470 → #556、`topcoat-l10n`）、signal の制約（#448 → 0.10 で構造体対応）、`<head>` の設定（#404 → 提案の設計ではなく #566 / #570 で独自に）。
+- 書き方の好みは通らない: JSX 風の構文（#549、「境界は意図的」）、`fallback` の改名（#434）。理由は説明している。
+- 不具合はすぐ直る（#369 → #371）。README の Roadmap にも「アイデアがあれば Issue を」。
+- まとめ: 「問題の提起には開かれていて、解き方の一貫性にはこだわる」。データ単位のキャッシュを提案するなら、API を決めて持ち込むより、関連商品の 800ms と Next.js の 2 行・topcoat での回避策・計測値を具体的に示す方が通りやすそう。
