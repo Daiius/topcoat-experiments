@@ -4,7 +4,10 @@ const pw = require(process.argv[2]);
 const sites = {next: 'https://topcoat-experiments-nextjs.vercel.app', topcoat: 'https://topcoat-experiments.vercel.app'};
 // VPS=https://<host> を付けると、VPS + Cloudflare に置いた topcoat 版も同じ手順で測る（ホスト名はリポジトリに書かない）。
 if (process.env.VPS) sites['topcoat-vps'] = process.env.VPS;
-const relatedSel = 'xpath=//h2[contains(., "Related products")]/following::a[starts-with(@href, "/products/")][1]';
+// locator.waitFor は再確認の間隔が伸びていき（最後は 500ms おき）、遅れて出た要素の時刻が最大 500ms ずれる。
+// 毎フレーム確かめる waitForFunction（polling: 'raf'）で待つ。
+const h1Ready = (page) => page.waitForFunction(() => [...document.querySelectorAll('h1')].some(h => !/All products/.test(h.textContent)), null, {polling: 'raf'});
+const relatedReady = (page) => page.waitForFunction(() => document.evaluate('//h2[contains(., "Related products")]/following::a[starts-with(@href, "/products/")][1]', document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue, null, {polling: 'raf'});
 async function net(page) {
   const cdp = await page.context().newCDPSession(page); await cdp.send('Network.enable');
   const st = {reqs: 0, cached: 0, bytes: 0};
@@ -16,8 +19,8 @@ async function net(page) {
 }
 async function timedLoad(page, url) {
   const t0 = Date.now(); await page.goto(url, {waitUntil: 'commit'});
-  await page.locator('h1', {hasNotText: 'All products'}).first().waitFor(); const h1 = Date.now() - t0;
-  await page.locator(relatedSel).waitFor({state: 'attached'}); const rel = Date.now() - t0;
+  await h1Ready(page); const h1 = Date.now() - t0;
+  await relatedReady(page); const rel = Date.now() - t0;
   await page.waitForLoadState('networkidle'); return {h1, related: rel};
 }
 (async () => {
@@ -29,8 +32,8 @@ async function timedLoad(page, url) {
     await page.goto(H + '/products', {waitUntil: 'networkidle'}); await page.waitForTimeout(2000); take();
     const link = page.locator('main a[href^="/products/"]:not([href="/products/1"])').nth(2); const href = await link.getAttribute('href');
     const t0 = Date.now(); await link.click();
-    await page.waitForURL(H + href, {waitUntil: 'commit'}); await page.locator('h1', {hasNotText: 'All products'}).first().waitFor(); const h1 = Date.now() - t0;
-    await page.locator(relatedSel).waitFor({state: 'attached'}); const rel = Date.now() - t0;
+    await page.waitForURL(H + href, {waitUntil: 'commit'}); await h1Ready(page); const h1 = Date.now() - t0;
+    await relatedReady(page); const rel = Date.now() - t0;
     await page.waitForLoadState('networkidle'); await page.waitForTimeout(500);
     rows.push({run, site: name, phase: 'C 一覧→詳細(クリック)', h1, related: rel, ...take()});
     // D: 一覧に戻り、未訪問の商品に 1 秒ホバーしてからクリック（先読みが済んだ状態の遷移）
@@ -38,8 +41,8 @@ async function timedLoad(page, url) {
     const link2 = page.locator('main a[href^="/products/"]:not([href="/products/1"])').nth(5); const href2 = await link2.getAttribute('href');
     await link2.hover(); await page.waitForTimeout(1000);
     const t1 = Date.now(); await link2.click();
-    await page.waitForURL(H + href2, {waitUntil: 'commit'}); await page.locator('h1', {hasNotText: 'All products'}).first().waitFor(); const h1d = Date.now() - t1;
-    await page.locator(relatedSel).waitFor({state: 'attached'}); const reld = Date.now() - t1;
+    await page.waitForURL(H + href2, {waitUntil: 'commit'}); await h1Ready(page); const h1d = Date.now() - t1;
+    await relatedReady(page); const reld = Date.now() - t1;
     await page.waitForLoadState('networkidle'); await page.waitForTimeout(500);
     rows.push({run, site: name, phase: 'D 1 秒ホバー後にクリック', h1: h1d, related: reld, ...take()});
     await ctx.close();
