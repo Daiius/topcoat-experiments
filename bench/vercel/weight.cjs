@@ -2,6 +2,8 @@
 // usage: node bench/vercel/weight.cjs <path to playwright-core>   （docs/journal.md「ページごとの初回ロード」）
 const pw = require(process.argv[2]);
 const sites = {next: 'https://topcoat-experiments-nextjs.vercel.app', topcoat: 'https://topcoat-experiments.vercel.app'};
+// VPS=https://<host> を付けると、VPS + Cloudflare に置いた topcoat 版も同じ手順で測る（ホスト名はリポジトリに書かない）。
+if (process.env.VPS) sites['topcoat-vps'] = process.env.VPS;
 const pages = ['/', '/products', '/products/1', '/cart'];
 (async () => {
   const b = await pw.chromium.launch();

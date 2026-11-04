@@ -13,6 +13,9 @@
 # タグは git の短いハッシュと latest。VPS ではハッシュのタグを指定すると切り戻しやすい。
 # ⚠ ghcr.io に初めて push したパッケージは private になる。VPS から pull するには、
 #   GitHub のパッケージ設定で public にするか、VPS で `docker login ghcr.io` する。
+# ⚠ org.opencontainers.image.source ラベルは付けない。付けると ghcr が初回 push 時にパッケージを
+#   リポジトリへ紐付けようとする。付けていた時は、層は上がったうえで最後に `denied` になった
+#   （2026-11-04。ラベルの無い他のイメージは同じ認証で push できている）。
 set -euo pipefail
 
 IMAGE="${IMAGE:-ghcr.io/daiius/topcoat-experiments-topcoat}"
@@ -53,7 +56,6 @@ start=$(date +%s)
 docker buildx build \
   --platform "$PLATFORM" \
   --load \
-  --label "org.opencontainers.image.source=https://github.com/Daiius/topcoat-experiments" \
   --label "org.opencontainers.image.revision=$(git rev-parse HEAD)" \
   -f topcoat.Dockerfile \
   -t "$IMAGE:$REV" -t "$IMAGE:latest" \

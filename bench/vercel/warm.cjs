@@ -2,6 +2,8 @@
 // usage: node bench/vercel/warm.cjs <path to playwright-core>   （docs/journal.md「ブラウザのキャッシュあり・なし」）
 const pw = require(process.argv[2]);
 const sites = {next: 'https://topcoat-experiments-nextjs.vercel.app', topcoat: 'https://topcoat-experiments.vercel.app'};
+// VPS=https://<host> を付けると、VPS + Cloudflare に置いた topcoat 版も同じ手順で測る（ホスト名はリポジトリに書かない）。
+if (process.env.VPS) sites['topcoat-vps'] = process.env.VPS;
 const relatedSel = 'xpath=//h2[contains(., "Related products")]/following::a[starts-with(@href, "/products/")][1]';
 async function net(page) {
   const cdp = await page.context().newCDPSession(page); await cdp.send('Network.enable');
