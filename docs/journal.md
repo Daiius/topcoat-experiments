@@ -933,3 +933,34 @@ topcoat の `<a>` は普通のリンクで、遷移のたびに HTML を丸ご�
 - **先読みが間に合わないと topcoat は遅い**（C: 関連商品 1363ms）。800ms 待ちに加えて、Vercel 上では応答の受信が終わってから関連商品が出るまでさらに約 450ms かかる（手元では即時、原因未特定。以前の「ときどき 1.3 秒台」と同じ値）。
 - **先読みの代償は逆向き**: topcoat はホバーのたびにサーバーでページ全体を描画する（遅いデータも取りに行く）。Next.js は先読みが軽い（静的シェル、CDN）代わりに、商品ごとの中身はクリックまで取らない。
 - 計測スクリプトの誤りを直した: クライアント遷移では一覧ページの `h1`（"All products"）を拾っていたので、`hasNotText: 'All products'` で待つようにした。直す前の C の「h1」の値（この節より前の表）は、Next.js・topcoat とも遷移前の見出しを拾っていた可能性がある。
+
+## 2026-11-04 [VPS][topcoat][計測] VPS + Cloudflare に置いて Vercel と比べる
+
+- **構成**: 同じイメージ（26a4f19）を、さくらの VPS の docker で動かした。前段は docker の nginx で、その前に Cloudflare のプロキシを置いた。nginx の設定は WebSocket の中継（`Upgrade` / `Connection`）、`proxy_buffering off`、`Host $host`、`proxy_read_timeout 1h` の 4 点。
+- **疎通**: `/products/1` は 200 で、`cf-cache-status: DYNAMIC`（HTML はキャッシュされない）。関連商品の 800ms は、最初のバイトから約 800ms 遅れて届いた（ストリームのまま）。WebSocket は 101 で切り替わった。`/_topcoat/assets/` の css と画像は、2 回目から Cloudflare の HIT になった（topcoat が `public, max-age=31536000, immutable` を付けているので、Cloudflare 側の設定は要らない）。HTML は Cloudflare が zstd で圧縮した。
+- **詰まった点**: 単一ファイルで bind mount した `nginx.conf` は、エディタが保存時にファイルを差し替えるため、コンテナに変更が見えない（reload しても古い設定のまま）。外側の骨組みだけを単一ファイルで残し、http の中身を `conf.d/` のディレクトリマウントに移した。そうすれば `nginx -t && nginx -s reload` で反映される。骨組みを変えたあとはコンテナを作り直す必要があり、それを忘れて 444（受け皿の server）に落ちた。
+- **ghcr への初回 push が `denied`**: 層は上がったうえで、最後に失敗した。`org.opencontainers.image.source` ラベルを外すと（`scripts/image-topcoat.sh`）、push できた。ドキュメント上は `write:packages` だけで足りるはずで、原因ははっきりしない。
+- **Cloudflare Web Analytics が beacon を自動で差し込む**: ブラウザで見ると `static.cloudflareinsights.com/beacon.min.js`（約 10KB）と `POST /cdn-cgi/rum` が増えていた。curl で取った HTML には現れない。Vercel と比べるときは、この 2 リクエストと約 11KB を差し引いて読む。
+
+### 結果（国内の回線、生データは `bench/results/20261104-vps/warm.md`）
+
+curl で 40 回（`/products/1〜20`、ms）:
+
+| | TTFB p50 / p90 | 完了 p50 / p90 |
+|---|---|---|
+| Vercel（hnd1） | 115 / 132 | 917 / 937 |
+| VPS + Cloudflare | 126 / 146 | 927 / 950 |
+
+ブラウザ（warm.cjs、3 回の中央値、商品名 / 関連商品、ms）:
+
+| 状況 | topcoat（Vercel） | topcoat（VPS + Cloudflare） |
+|---|---|---|
+| A 初回（ブラウザのキャッシュ空） | 151 / 939 | 163 / 948 |
+| B 再訪問（`goto`） | 60 / 845 | 80 / 862 |
+| C 一覧からそのままクリック | 84 / 1369 | 82 / 1368 |
+| D 1 秒ホバー後にクリック | 27 / 27 | 27 / 27 |
+
+- **置き場所の差はほとんど出ない**。TTFB の差は 10ms 程度で、完了までの時間は 800ms の擬似遅延で決まる。常駐の安い VPS でも、Vercel と同じ体感で動く。
+- **先読みは Cloudflare 越しでも効く**（D: 27ms）。runtime の応答に付けた `Cache-Control: private, max-age=30` は、Cloudflare を通っても書き換えられない（`private` なのでキャッシュもされない）。
+- **C の「受信が終わってから関連商品が出るまでの約 450〜550ms」は、Vercel に固有のものではなかった**。VPS + Cloudflare でも 1368ms で、Vercel とほぼ同じ値になった。手元の dev では即時なので、CDN を挟んだ経路（HTTP/2）と runtime の遷移の組み合わせを疑う。原因は未特定。
+- B の Vercel run 3 の 1355ms のような単発の遅れは、VPS 側の 3 回には出なかった。
